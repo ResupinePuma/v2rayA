@@ -31,6 +31,34 @@ func StartV2ray() (err error) {
 	}
 	if css := configure.GetConnectedServers(); css.Len() == 0 {
 		return fmt.Errorf("failed: no server is selected. please select at least one server")
+	} else {
+		filtered := make([]configure.Which, 0, css.Len())
+		for _, wt := range css.Get() {
+			supported, e := IsSupported(*wt)
+			if e != nil {
+				return fmt.Errorf("failed to check server support before start: %w", e)
+			}
+			if !supported {
+				log.Warn("StartV2ray: auto-excluding unsupported server: type=%s id=%d sub=%d outbound=%s", wt.TYPE, wt.ID, wt.Sub, wt.Outbound)
+				continue
+			}
+			filtered = append(filtered, *wt)
+		}
+		if len(filtered) != css.Len() {
+			for _, out := range configure.GetOutbounds() {
+				if e := configure.ClearConnects(out); e != nil {
+					return fmt.Errorf("failed to clear outbound %q while removing unsupported servers: %w", out, e)
+				}
+			}
+			for _, wt := range filtered {
+				if e := configure.AddConnect(wt); e != nil {
+					return fmt.Errorf("failed to restore supported connection after filtering: %w", e)
+				}
+			}
+		}
+		if len(filtered) == 0 {
+			return fmt.Errorf("failed: all selected servers are unsupported")
+		}
 	}
 	return v2ray.UpdateV2RayConfig()
 }
@@ -97,6 +125,10 @@ func Connect(which *configure.Which) (err error) {
 	}()
 	if which == nil {
 		return fmt.Errorf("which can not be nil")
+	}
+	if supported, e := IsSupported(*which); e == nil && !supported {
+		log.Warn("Connect: skip unsupported server: type=%s id=%d sub=%d outbound=%s", which.TYPE, which.ID, which.Sub, which.Outbound)
+		return nil
 	}
 	setting := GetSetting()
 	if err = checkSupport([]*configure.Which{which}); err != nil {
@@ -169,6 +201,14 @@ func ReplaceOutboundConnections(outbound string, touches []configure.Which) (err
 			return fmt.Errorf("invalid touch type at index %d: %q", i, wt.TYPE)
 		}
 		wt.Outbound = outbound
+		supported, e := IsSupported(wt)
+		if e != nil {
+			return fmt.Errorf("failed to check server support at index %d: %w", i, e)
+		}
+		if !supported {
+			log.Warn("ReplaceOutboundConnections: skip unsupported server at index %d: type=%s id=%d sub=%d", i, wt.TYPE, wt.ID, wt.Sub)
+			continue
+		}
 		key := fmt.Sprintf("%s/%d/%d", wt.TYPE, wt.ID, wt.Sub)
 		if _, ok := seen[key]; ok {
 			continue
