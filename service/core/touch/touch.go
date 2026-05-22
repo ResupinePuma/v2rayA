@@ -3,7 +3,6 @@ package touch
 import (
 	jsoniter "github.com/json-iterator/go"
 	"github.com/v2rayA/v2rayA/db/configure"
-	"github.com/v2rayA/v2rayA/pkg/util/log"
 	"net"
 	"net/url"
 	"strconv"
@@ -77,32 +76,39 @@ func isDeadLatency(latency string) bool {
 	return true
 }
 
+func parseSubscriptionHost(address string) string {
+	if strings.TrimSpace(address) == "" {
+		return ""
+	}
+	u, err := url.Parse(address)
+	if err == nil && u != nil && u.Host != "" {
+		return u.Host
+	}
+	// it may be OOCv1
+	tmp := make(map[string]string)
+	if err = jsoniter.Unmarshal([]byte(address), &tmp); err == nil {
+		if baseURL := strings.TrimSpace(tmp["baseUrl"]); baseURL != "" {
+			u, err = url.Parse(baseURL)
+			if err == nil && u != nil {
+				return u.Host
+			}
+		}
+	}
+	// Some subscription "address" values can be proxy links (not URL host-style),
+	// keep Touch generation resilient and avoid noisy warnings here.
+	return ""
+}
+
 // GenerateTouch generates a touch from database
 func GenerateTouch() (t Touch) {
 	t.Servers = serverRawsToServers(configure.GetServers())
 	subscriptions := configure.GetSubscriptions()
 	t.Subscriptions = make([]Subscription, len(subscriptions))
 	for i, v := range subscriptions {
-		u, err := url.Parse(v.Address)
-		if err != nil {
-			// it may is OOCv1
-			tmp := make(map[string]string)
-			_ = jsoniter.Unmarshal([]byte(v.Address), &tmp)
-			if addr, ok := tmp["baseUrl"]; !ok {
-				log.Warn("%v", err)
-				continue
-			} else {
-				u, err = url.Parse(addr)
-				if err != nil {
-					log.Warn("%v", err)
-					continue
-				}
-			}
-		}
 		t.Subscriptions[i] = Subscription{
 			Remarks:    v.Remarks,
 			ID:         i + 1,
-			Host:       u.Host,
+			Host:       parseSubscriptionHost(v.Address),
 			Address:    v.Address,
 			Status:     SubscriptionStatus(v.Status),
 			Servers:    serverRawsToServers(v.Servers),
