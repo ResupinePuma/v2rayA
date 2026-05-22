@@ -19,7 +19,7 @@
       </b-field>
       <b-field label="Type" label-position="on-border">
         <b-select v-model="setting.type" expanded>
-          <option v-for="v in supportedTypes" :key="v" :value="v">{{ v }}</option>
+          <option v-for="v in supportedTypes" :key="v" :value="v">{{ formatType(v) }}</option>
         </b-select>
       </b-field>
     </section>
@@ -79,6 +79,22 @@ export default {
     });
   },
   methods: {
+    formatType(v) {
+      switch (v) {
+      case "leastping":
+        return "leastping (latency)"
+      case "leastload":
+        return "leastload (observer)"
+      case "roundrobin":
+        return "roundrobin"
+      case "random":
+        return "random"
+      case "health":
+        return "health (alias of leastping)"
+      default:
+        return v
+      }
+    },
     handleClickDelete() {
       const that = this;
       this.$buefy.dialog.confirm({

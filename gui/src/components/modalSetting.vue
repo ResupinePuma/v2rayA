@@ -299,7 +299,7 @@
       </b-field>
 
 
-      <b-field v-show="pacMode === 'gfwlist' || transparent === 'gfwlist'" :label="$t('setting.autoUpdateGfwlist')"
+      <b-field v-show="pacMode === 'gfwlist' || transparent === 'gfwlist'" :label="`${$t('setting.autoUpdateGfwlist')} (min)`"
         label-position="on-border">
         <b-select v-model="pacAutoUpdateMode" expanded>
           <option value="none">{{ $t("setting.options.off") }}</option>
@@ -314,7 +314,7 @@
           v-model="pacAutoUpdateIntervalMinute" custom-class="no-shadow" type="number" min="1"
           validation-icon=" iconfont icon-alert" style="flex: 1" />
       </b-field>
-      <b-field :label="$t('setting.autoUpdateSub')" label-position="on-border">
+      <b-field :label="`${$t('setting.autoUpdateSub')} (min)`" label-position="on-border">
         <b-select v-model="subscriptionAutoUpdateMode" expanded>
           <option value="none">{{ $t("setting.options.off") }}</option>
           <option value="auto_update">

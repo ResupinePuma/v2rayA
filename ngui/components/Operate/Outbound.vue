@@ -56,7 +56,12 @@ const editOutbound = async(outbound: string) => {
       </ElFormItem>
       <ElFormItem label="type">
         <ElSelect v-model="setting!.type">
-          <ElOption v-for="t in supportedTypes" :key="t" :label="t" :value="t" />
+          <ElOption
+            v-for="t in supportedTypes"
+            :key="t"
+            :label="t === 'health' ? 'health (alias of leastping)' : t"
+            :value="t"
+          />
         </ElSelect>
       </ElFormItem>
     </ElForm>
