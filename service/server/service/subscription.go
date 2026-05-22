@@ -287,6 +287,22 @@ func SelectServersFromSubscription(index int, shouldDisconnect bool) (err error)
 	subscriptionServer.Sub = index // Subscription IDs start with 0
 	subscriptionServer.Outbound = "proxy"
 
+	if shouldDisconnect {
+		connected := configure.GetConnectedServers()
+		if connected == nil {
+			return nil
+		}
+		for _, cs := range connected.Get() {
+			if cs.TYPE == configure.SubscriptionServerType && cs.Sub == index {
+				if err := Disconnect(*cs, false); err != nil {
+					log.Error("[AutoSelect] Failed to disconnect server from subscription %d (ID=%d): %v", index, cs.ID, err)
+					return err
+				}
+			}
+		}
+		return nil
+	}
+
 	for i := 1; i < configure.GetLenSubscriptionServers(index)+1; i++ {
 		subscriptionServer.ID = i // Server IDs start with 1
 		sub := configure.GetSubscription(index)
@@ -307,22 +323,12 @@ func SelectServersFromSubscription(index int, shouldDisconnect bool) (err error)
 			continue
 		}
 
-		if shouldDisconnect {
-			err := Disconnect(subscriptionServer, true)
-			if err == nil {
-				log.Info("[AutoSelect] Disconnected from server: %v", serverName)
-			} else {
-				log.Error("[AutoSelect] Failed to disconnect from server: %v", serverName)
-				return err
-			}
+		err := Connect(&subscriptionServer)
+		if err == nil {
+			log.Info("[AutoSelect] Automatically selected server: %v", serverName)
 		} else {
-			err := Connect(&subscriptionServer)
-			if err == nil {
-				log.Info("[AutoSelect] Automatically selected server: %v", serverName)
-			} else {
-				log.Error("[AutoSelect] Failed to connect to server: %v", serverName)
-				return err
-			}
+			log.Error("[AutoSelect] Failed to connect to server: %v", serverName)
+			return err
 		}
 	}
 	return nil

@@ -1652,6 +1652,11 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 
 			//TODO: random, leastload
 			strategy := serverData.OutboundName2Setting[outbound].Type
+			strategyName := strings.ToLower(strategy.String())
+			if strategyName == string(configure.Health) {
+				// "health" is a UI-friendly alias that prefers alive nodes.
+				strategyName = string(configure.LeastPing)
+			}
 			interval, err := time.ParseDuration(serverData.OutboundName2Setting[outbound].ProbeInterval)
 			if err != nil {
 				log.Warn("observatory: %v", err)
@@ -1667,14 +1672,14 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 				Tag:      outbound,
 				Selector: selector,
 				Strategy: coreObj.BalancerStrategy{
-					Type: strategy.String(),
+					Type: strategyName,
 					Settings: &coreObj.StrategySettings{
 						ObserverTag: outbound,
 					},
 				},
 			})
 
-			if strings.ToLower(strategy.String()) == "leastping" {
+			if strategyName == string(configure.LeastPing) {
 				probeUrl := serverData.OutboundName2Setting[outbound].ProbeURL
 				if _, err := url.Parse(probeUrl); err != nil {
 					log.Warn("observatory: %v", err)

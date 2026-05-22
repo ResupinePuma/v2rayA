@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -26,17 +27,18 @@ type Server struct {
 	Address     string              `json:"address"`
 	Net         string              `json:"net"`
 	PingLatency string              `json:"pingLatency"`
+	IsDead      bool                `json:"isDead"`
 }
 type Subscription struct {
-	Remarks string              `json:"remarks,omitempty"`
-	ID      int                 `json:"id"`
-	TYPE    configure.TouchType `json:"_type"`
-	Host    string              `json:"host"`
-	Address string              `json:"address"`
-	Status  SubscriptionStatus  `json:"status"`
-	Info    string              `json:"info"`
-	Servers []Server            `json:"servers"`
-	AutoSelect bool             `json:"autoSelect"`
+	Remarks    string              `json:"remarks,omitempty"`
+	ID         int                 `json:"id"`
+	TYPE       configure.TouchType `json:"_type"`
+	Host       string              `json:"host"`
+	Address    string              `json:"address"`
+	Status     SubscriptionStatus  `json:"status"`
+	Info       string              `json:"info"`
+	Servers    []Server            `json:"servers"`
+	AutoSelect bool                `json:"autoSelect"`
 }
 
 func NewUpdateStatus() SubscriptionStatus {
@@ -59,9 +61,20 @@ func serverRawsToServers(rss []configure.ServerRaw) (ts []Server) {
 			Address:     address,
 			Net:         v.ServerObj.ProtoToShow(),
 			PingLatency: v.Latency,
+			IsDead:      isDeadLatency(v.Latency),
 		}
 	}
 	return
+}
+
+func isDeadLatency(latency string) bool {
+	if latency == "" {
+		return false
+	}
+	if strings.HasSuffix(latency, "ms") {
+		return false
+	}
+	return true
 }
 
 // GenerateTouch generates a touch from database
@@ -87,14 +100,14 @@ func GenerateTouch() (t Touch) {
 			}
 		}
 		t.Subscriptions[i] = Subscription{
-			Remarks: v.Remarks,
-			ID:      i + 1,
-			Host:    u.Host,
-			Address: v.Address,
-			Status:  SubscriptionStatus(v.Status),
-			Servers: serverRawsToServers(v.Servers),
-			Info:    v.Info,
-			AutoSelect:  v.AutoSelect,
+			Remarks:    v.Remarks,
+			ID:         i + 1,
+			Host:       u.Host,
+			Address:    v.Address,
+			Status:     SubscriptionStatus(v.Status),
+			Servers:    serverRawsToServers(v.Servers),
+			Info:       v.Info,
+			AutoSelect: v.AutoSelect,
 		}
 	}
 	t.ConnectedServers = configure.GetConnectedServers().Get()

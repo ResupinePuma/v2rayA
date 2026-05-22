@@ -7,55 +7,73 @@ import (
 )
 
 type Setting struct {
-	LogLevel                           string          `json:"logLevel"`
-	RulePortMode                       RulePortMode    `json:"pacMode"`
-	ProxyModeWhenSubscribe             ProxyMode       `json:"proxyModeWhenSubscribe"`
-	GFWListAutoUpdateMode              AutoUpdateMode  `json:"pacAutoUpdateMode"`
-	GFWListAutoUpdateIntervalHour      int             `json:"pacAutoUpdateIntervalHour"`
-	SubscriptionAutoUpdateMode         AutoUpdateMode  `json:"subscriptionAutoUpdateMode"`
-	SubscriptionAutoUpdateIntervalHour int             `json:"subscriptionAutoUpdateIntervalHour"`
-	TcpFastOpen                        DefaultYesNo    `json:"tcpFastOpen"`
-	MuxOn                              DefaultYesNo    `json:"muxOn"`
-	Mux                                int             `json:"mux"`
-	InboundSniffing                    InboundSniffing `json:"inboundSniffing"`
-	Transparent                        TransparentMode `json:"transparent"`
-	IpForward                          bool            `json:"ipforward"`
-	RouteOnly                          bool            `json:"routeOnly"`
-	PortSharing                        bool            `json:"portSharing"`
-	TransparentType                    TransparentType `json:"transparentType"`
-	TproxyExcludedInterfaces           string          `json:"tproxyExcludedInterfaces"`
-	TunBypassInterfaces                string          `json:"tunBypassInterfaces"`
-	TunAutoRoute                       bool            `json:"tunAutoRoute"`
-	TunRouteShellType                  string          `json:"tunRouteShellType"`
-	TunRouteShellPath                  string          `json:"tunRouteShellPath"`
-	TunSetupScript                     string          `json:"tunSetupScript"`
-	TunTeardownScript                  string          `json:"tunTeardownScript"`
-	TunProcessBackend                  string          `json:"tunProcessBackend"`
-	TunExcludeProcesses                string          `json:"tunExcludeProcesses"`
-	SsBackend                          string          `json:"ssBackend"`
-	TrojanBackend                      string          `json:"trojanBackend"`
+	LogLevel                             string          `json:"logLevel"`
+	RulePortMode                         RulePortMode    `json:"pacMode"`
+	ProxyModeWhenSubscribe               ProxyMode       `json:"proxyModeWhenSubscribe"`
+	GFWListAutoUpdateMode                AutoUpdateMode  `json:"pacAutoUpdateMode"`
+	GFWListAutoUpdateIntervalHour        int             `json:"pacAutoUpdateIntervalHour"`
+	GFWListAutoUpdateIntervalMinute      int             `json:"pacAutoUpdateIntervalMinute"`
+	SubscriptionAutoUpdateMode           AutoUpdateMode  `json:"subscriptionAutoUpdateMode"`
+	SubscriptionAutoUpdateIntervalHour   int             `json:"subscriptionAutoUpdateIntervalHour"`
+	SubscriptionAutoUpdateIntervalMinute int             `json:"subscriptionAutoUpdateIntervalMinute"`
+	TcpFastOpen                          DefaultYesNo    `json:"tcpFastOpen"`
+	MuxOn                                DefaultYesNo    `json:"muxOn"`
+	Mux                                  int             `json:"mux"`
+	InboundSniffing                      InboundSniffing `json:"inboundSniffing"`
+	Transparent                          TransparentMode `json:"transparent"`
+	IpForward                            bool            `json:"ipforward"`
+	RouteOnly                            bool            `json:"routeOnly"`
+	PortSharing                          bool            `json:"portSharing"`
+	TransparentType                      TransparentType `json:"transparentType"`
+	TproxyExcludedInterfaces             string          `json:"tproxyExcludedInterfaces"`
+	TunBypassInterfaces                  string          `json:"tunBypassInterfaces"`
+	TunAutoRoute                         bool            `json:"tunAutoRoute"`
+	TunRouteShellType                    string          `json:"tunRouteShellType"`
+	TunRouteShellPath                    string          `json:"tunRouteShellPath"`
+	TunSetupScript                       string          `json:"tunSetupScript"`
+	TunTeardownScript                    string          `json:"tunTeardownScript"`
+	TunProcessBackend                    string          `json:"tunProcessBackend"`
+	TunExcludeProcesses                  string          `json:"tunExcludeProcesses"`
+	SsBackend                            string          `json:"ssBackend"`
+	TrojanBackend                        string          `json:"trojanBackend"`
 }
 
 func NewSetting() (setting *Setting) {
 	return &Setting{
-		LogLevel:                           "info",
-		RulePortMode:                       WhitelistMode,
-		ProxyModeWhenSubscribe:             ProxyModeDirect,
-		GFWListAutoUpdateMode:              NotAutoUpdate,
-		GFWListAutoUpdateIntervalHour:      0,
-		SubscriptionAutoUpdateMode:         NotAutoUpdate,
-		SubscriptionAutoUpdateIntervalHour: 0,
-		TcpFastOpen:                        Default,
-		MuxOn:                              No,
-		Mux:                                8,
-		InboundSniffing:                    "http,tls,quic",
-		Transparent:                        TransparentClose,
-		IpForward:                          ipforward.IsIpForwardOn(),
-		PortSharing:                        false,
-		TransparentType:                    TransparentRedirect,
-		TproxyExcludedInterfaces:           "docker*,veth*,wg*,ppp*,br-*",
-		TunAutoRoute:                       true,
+		LogLevel:                             "info",
+		RulePortMode:                         WhitelistMode,
+		ProxyModeWhenSubscribe:               ProxyModeDirect,
+		GFWListAutoUpdateMode:                NotAutoUpdate,
+		GFWListAutoUpdateIntervalHour:        0,
+		GFWListAutoUpdateIntervalMinute:      0,
+		SubscriptionAutoUpdateMode:           NotAutoUpdate,
+		SubscriptionAutoUpdateIntervalHour:   0,
+		SubscriptionAutoUpdateIntervalMinute: 0,
+		TcpFastOpen:                          Default,
+		MuxOn:                                No,
+		Mux:                                  8,
+		InboundSniffing:                      "http,tls,quic",
+		Transparent:                          TransparentClose,
+		IpForward:                            ipforward.IsIpForwardOn(),
+		PortSharing:                          false,
+		TransparentType:                      TransparentRedirect,
+		TproxyExcludedInterfaces:             "docker*,veth*,wg*,ppp*,br-*",
+		TunAutoRoute:                         true,
 	}
+}
+
+func (s *Setting) GFWListAutoUpdateDuration() int {
+	if s.GFWListAutoUpdateIntervalMinute > 0 {
+		return s.GFWListAutoUpdateIntervalMinute
+	}
+	return s.GFWListAutoUpdateIntervalHour * 60
+}
+
+func (s *Setting) SubscriptionAutoUpdateDuration() int {
+	if s.SubscriptionAutoUpdateIntervalMinute > 0 {
+		return s.SubscriptionAutoUpdateIntervalMinute
+	}
+	return s.SubscriptionAutoUpdateIntervalHour * 60
 }
 
 func (s *Setting) FillEmpty() {
