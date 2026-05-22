@@ -13,18 +13,21 @@ type ServerRaw struct {
 }
 
 type SubscriptionRaw struct {
-	Remarks string      `json:"remarks,omitempty"`
-	Address string      `json:"address"`
-	Status  string      `json:"status"` //update time, error info, etc.
-	Servers []ServerRaw `json:"servers"`
-	Info    string      `json:"info"` // maybe include some info from provider
-	AutoSelect bool     `json:"autoSelect"`
+	Remarks    string      `json:"remarks,omitempty"`
+	Address    string      `json:"address"`
+	Status     string      `json:"status"` //update time, error info, etc.
+	Servers    []ServerRaw `json:"servers"`
+	Info       string      `json:"info"` // maybe include some info from provider
+	AutoSelect bool        `json:"autoSelect"`
 }
 
 func Bytes2SubscriptionRaw(b []byte) (*SubscriptionRaw, error) {
 	var s SubscriptionRaw
 	rawList := gjson.GetBytes(b, "servers").Array()
 	for _, raw := range rawList {
+		if wrapped := raw.Get("Raw").String(); wrapped != "" {
+			raw = gjson.Parse(wrapped)
+		}
 		var obj serverObj.ServerObj
 		obj, err := serverObj.New(raw.Get("serverObj.protocol").String())
 		if err != nil {
@@ -34,6 +37,24 @@ func Bytes2SubscriptionRaw(b []byte) (*SubscriptionRaw, error) {
 	}
 	if err := jsoniter.Unmarshal(b, &s); err != nil {
 		return nil, err
+	}
+	for i := range s.Servers {
+		if s.Servers[i].ServerObj != nil {
+			continue
+		}
+		raw := rawList[i]
+		if wrapped := raw.Get("Raw").String(); wrapped != "" {
+			raw = gjson.Parse(wrapped)
+		}
+		protocol := raw.Get("serverObj.protocol").String()
+		if protocol == "" {
+			protocol = "vmess"
+		}
+		obj, err := serverObj.New(protocol)
+		if err != nil {
+			return nil, err
+		}
+		s.Servers[i].ServerObj = obj
 	}
 	if s.Servers == nil {
 		s.Servers = []ServerRaw{}
