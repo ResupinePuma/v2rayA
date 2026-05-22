@@ -1,5 +1,11 @@
 package configure
 
+import (
+	"strings"
+
+	"github.com/v2rayA/v2rayA/conf"
+)
+
 type ObservatoryType string
 
 func (t ObservatoryType) String() string {
@@ -22,10 +28,17 @@ type OutboundSetting struct {
 
 // DefaultOutboundSetting returns an OutboundSetting with default values.
 func DefaultOutboundSetting() OutboundSetting {
+	typ := ObservatoryType(DefaultOutboundType)
+	if envType := strings.ToLower(strings.TrimSpace(conf.GetEnvironmentConfig().OutboundType)); envType != "" {
+		candidate := ObservatoryType(envType)
+		if IsSupportedObservatoryType(candidate) {
+			typ = candidate
+		}
+	}
 	return OutboundSetting{
 		ProbeURL:      DefaultProbeURL,
 		ProbeInterval: DefaultProbeInterval,
-		Type:          ObservatoryType(DefaultOutboundType),
+		Type:          typ,
 	}
 }
 
