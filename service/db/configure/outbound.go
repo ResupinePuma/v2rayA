@@ -7,9 +7,11 @@ func (t ObservatoryType) String() string {
 }
 
 const (
-	LeastPing ObservatoryType = "leastping"
-	Random    ObservatoryType = "random"
-	Health    ObservatoryType = "health"
+	LeastPing  ObservatoryType = "leastping"
+	Random     ObservatoryType = "random"
+	Health     ObservatoryType = "health"
+	RoundRobin ObservatoryType = "roundrobin"
+	LeastLoad  ObservatoryType = "leastload"
 )
 
 type OutboundSetting struct {
@@ -25,4 +27,23 @@ func DefaultOutboundSetting() OutboundSetting {
 		ProbeInterval: DefaultProbeInterval,
 		Type:          ObservatoryType(DefaultOutboundType),
 	}
+}
+
+func SupportedObservatoryTypes() []ObservatoryType {
+	return []ObservatoryType{
+		LeastPing,
+		Random,
+		RoundRobin,
+		LeastLoad,
+		Health, // alias of leastping for UI
+	}
+}
+
+func IsSupportedObservatoryType(t ObservatoryType) bool {
+	for _, v := range SupportedObservatoryTypes() {
+		if v == t {
+			return true
+		}
+	}
+	return false
 }
