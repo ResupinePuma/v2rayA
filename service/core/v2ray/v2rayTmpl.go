@@ -1679,7 +1679,7 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 				},
 			})
 
-			if strategyName == string(configure.LeastPing) {
+			if strategyName == string(configure.LeastPing) || strategyName == string(configure.LeastLoad) {
 				probeUrl := serverData.OutboundName2Setting[outbound].ProbeURL
 				if _, err := url.Parse(probeUrl); err != nil {
 					log.Warn("observatory: %v", err)
