@@ -34,9 +34,14 @@ func StartV2ray() (err error) {
 	} else {
 		filtered := make([]configure.Which, 0, css.Len())
 		for _, wt := range css.Get() {
+			if !isValidWhichRange(*wt) {
+				log.Warn("StartV2ray: auto-excluding out-of-range connection: type=%s id=%d sub=%d outbound=%s", wt.TYPE, wt.ID, wt.Sub, wt.Outbound)
+				continue
+			}
 			supported, e := IsSupported(*wt)
 			if e != nil {
-				return fmt.Errorf("failed to check server support before start: %w", e)
+				log.Warn("StartV2ray: auto-excluding invalid connection while support-checking: type=%s id=%d sub=%d outbound=%s err=%v", wt.TYPE, wt.ID, wt.Sub, wt.Outbound, e)
+				continue
 			}
 			if !supported {
 				log.Warn("StartV2ray: auto-excluding unsupported server: type=%s id=%d sub=%d outbound=%s", wt.TYPE, wt.ID, wt.Sub, wt.Outbound)
@@ -61,6 +66,23 @@ func StartV2ray() (err error) {
 		}
 	}
 	return v2ray.UpdateV2RayConfig()
+}
+
+func isValidWhichRange(wt configure.Which) bool {
+	if wt.ID <= 0 {
+		return false
+	}
+	switch wt.TYPE {
+	case configure.ServerType:
+		return wt.ID <= configure.GetLenServers()
+	case configure.SubscriptionServerType:
+		if wt.Sub < 0 || wt.Sub >= configure.GetLenSubscriptions() {
+			return false
+		}
+		return wt.ID <= configure.GetLenSubscriptionServers(wt.Sub)
+	default:
+		return false
+	}
 }
 
 func Disconnect(which configure.Which, clearOutbound bool) (err error) {
@@ -189,9 +211,15 @@ func ReplaceOutboundConnections(outbound string, touches []configure.Which) (err
 		switch wt.TYPE {
 		case configure.ServerType:
 			wt.Sub = 0
+			if wt.ID > configure.GetLenServers() {
+				return fmt.Errorf("invalid server id at index %d: %d", i, wt.ID)
+			}
 		case configure.SubscriptionServerType:
 			if wt.Sub < 0 {
 				return fmt.Errorf("invalid subscription index at index %d: %d", i, wt.Sub)
+			}
+			if wt.Sub >= configure.GetLenSubscriptions() || wt.ID > configure.GetLenSubscriptionServers(wt.Sub) {
+				return fmt.Errorf("invalid subscription server range at index %d: sub=%d id=%d", i, wt.Sub, wt.ID)
 			}
 		default:
 			return fmt.Errorf("invalid touch type at index %d: %q", i, wt.TYPE)
