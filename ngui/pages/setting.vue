@@ -152,7 +152,7 @@ const updateSetting = async() => {
         <ElInput
           v-if="setting.pacAutoUpdateMode === 'auto_update_at_intervals'"
           ref="autoUpdatePacInput"
-          v-model="setting.pacAutoUpdateIntervalHour"
+          v-model="setting.pacAutoUpdateIntervalMinute"
           type="number" min="1"
         />
       </ElSelect>
@@ -169,7 +169,7 @@ const updateSetting = async() => {
       <ElInput
         v-if="setting.subscriptionAutoUpdateMode === 'auto_update_at_intervals'"
         ref="autoUpdateSubInput"
-        v-model="setting.subscriptionAutoUpdateIntervalHour"
+        v-model="setting.subscriptionAutoUpdateIntervalMinute"
         type="number" min="1"
       />
     </div>

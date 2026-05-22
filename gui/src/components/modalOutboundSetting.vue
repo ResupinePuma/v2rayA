@@ -19,9 +19,7 @@
       </b-field>
       <b-field label="Type" label-position="on-border">
         <b-select v-model="setting.type" expanded>
-          <option value="leastping">
-            {{ $t("setting.options.leastPing") }}
-          </option>
+          <option v-for="v in supportedTypes" :key="v" :value="v">{{ v }}</option>
         </b-select>
       </b-field>
     </section>
@@ -62,6 +60,7 @@ export default {
       probeInterval: "",
       type: "",
     },
+    supportedTypes: ["leastping", "leastload", "roundrobin", "random", "health"],
     backendReady: false,
   }),
   created() {
@@ -73,6 +72,9 @@ export default {
     }).then((res) => {
       handleResponse(res, this, () => {
         Object.assign(this.setting, res.data.data.setting);
+        if (res.data.data.supportedTypes instanceof Array && res.data.data.supportedTypes.length > 0) {
+          this.supportedTypes = res.data.data.supportedTypes;
+        }
       });
     });
   },
