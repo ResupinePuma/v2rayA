@@ -3,6 +3,7 @@ package v2ray
 import (
 	"context"
 	"net"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -52,6 +53,43 @@ func init() {
 type ObservatoryResp struct {
 	OutboundName string
 	Resp         *pb.GetOutboundStatusResponse
+}
+
+func extractOutboundStatuses(resp *pb.GetOutboundStatusResponse) []*observatory.OutboundStatus {
+	if resp == nil {
+		return nil
+	}
+	// v2fly-compatible shape
+	if s := resp.GetStatus(); s != nil {
+		if os := s.GetStatus(); len(os) > 0 {
+			return os
+		}
+	}
+	// xray/v2ray-compat variants may expose different field/method names.
+	rv := reflect.ValueOf(resp)
+	if rv.Kind() != reflect.Ptr || rv.IsNil() {
+		return nil
+	}
+	candidates := []string{"GetOutboundStatus", "GetOutboundStatuses", "GetResult", "GetStats"}
+	for _, method := range candidates {
+		mv := rv.MethodByName(method)
+		if !mv.IsValid() || mv.Type().NumIn() != 0 || mv.Type().NumOut() != 1 {
+			continue
+		}
+		out := mv.Call(nil)[0]
+		if out.Kind() == reflect.Slice {
+			result := make([]*observatory.OutboundStatus, 0, out.Len())
+			for i := 0; i < out.Len(); i++ {
+				if v, ok := out.Index(i).Interface().(*observatory.OutboundStatus); ok {
+					result = append(result, v)
+				}
+			}
+			if len(result) > 0 {
+				return result
+			}
+		}
+	}
+	return nil
 }
 
 func getObservatoryResponses(conn *grpc.ClientConn, observatoryTags []string) (r []ObservatoryResp, err error) {
@@ -122,19 +160,15 @@ func ObservatoryProducer(apiPort int, observatoryTags []string) (closeFunc func(
 			} else {
 				css := configure.GetConnectedServers()
 				for _, r := range resps {
-					outboundStatus := r.Resp.GetStatus().GetStatus()
+					outboundStatus := extractOutboundStatuses(r.Resp)
 					os := make([]OutboundStatus, len(outboundStatus))
 					for i := range outboundStatus {
 						_ = mapper.AutoMapper(outboundStatus[i], &os[i])
 						index := p.tag2WhichIndex[os[i].OutboundTag]
-						if index >= css.Len() {
-							continue nextLoop
+						if index < 0 || index >= css.Len() {
+							continue
 						}
 						os[i].Which = css.Get()[index]
-						var w []configure.Which
-						for _, v := range css.Get() {
-							w = append(w, *v)
-						}
 					}
 					msg := gin.H{
 						"outboundName":   r.OutboundName,
