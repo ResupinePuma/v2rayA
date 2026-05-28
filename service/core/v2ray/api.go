@@ -93,21 +93,33 @@ func extractOutboundStatuses(resp *pb.GetOutboundStatusResponse) []*observatory.
 }
 
 func getObservatoryResponses(conn *grpc.ClientConn, observatoryTags []string) (r []ObservatoryResp, err error) {
-	c := pb.NewObservatoryServiceClient(conn)
-
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if len(observatoryTags) == 0 {
 		observatoryTags = append(observatoryTags, "")
 	}
+	methods := []string{
+		"/v2ray.core.app.observatory.command.ObservatoryService/GetOutboundStatus",
+		"/xray.core.app.observatory.command.ObservatoryService/GetOutboundStatus",
+	}
 	for _, tag := range observatoryTags {
-		resp, err := c.GetOutboundStatus(ctx, &pb.GetOutboundStatusRequest{
-			Tag: tag,
-		})
-		if err != nil {
-			return nil, err
+		req := &pb.GetOutboundStatusRequest{Tag: tag}
+		var resp *pb.GetOutboundStatusResponse
+		var callErr error
+		for _, method := range methods {
+			resp = new(pb.GetOutboundStatusResponse)
+			callErr = conn.Invoke(ctx, method, req, resp)
+			if callErr == nil {
+				r = append(r, ObservatoryResp{OutboundName: tag, Resp: resp})
+				break
+			}
+			if status.Code(callErr) != codes.Unimplemented && status.Code(callErr) != codes.Unknown {
+				return nil, callErr
+			}
 		}
-		r = append(r, ObservatoryResp{OutboundName: tag, Resp: resp})
+		if callErr != nil {
+			return nil, callErr
+		}
 	}
 	return r, nil
 }
