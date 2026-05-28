@@ -270,6 +270,26 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 	return configure.SetSubscription(index, &subscriptions[index])
 }
 
+func normalizeSubscriptionOutbounds(outbounds []string) []string {
+	seen := make(map[string]struct{})
+	normalized := make([]string, 0, len(outbounds))
+	for _, outbound := range outbounds {
+		outbound = strings.TrimSpace(outbound)
+		if outbound == "" {
+			continue
+		}
+		if _, ok := seen[outbound]; ok {
+			continue
+		}
+		seen[outbound] = struct{}{}
+		normalized = append(normalized, outbound)
+	}
+	if len(normalized) == 0 {
+		normalized = append(normalized, "proxy")
+	}
+	return normalized
+}
+
 func ModifySubscriptionRemark(subscription touch.Subscription) (err error) {
 	raw := configure.GetSubscription(subscription.ID - 1)
 	if raw == nil {
@@ -278,6 +298,7 @@ func ModifySubscriptionRemark(subscription touch.Subscription) (err error) {
 	raw.Remarks = subscription.Remarks
 	raw.Address = subscription.Address
 	raw.AutoSelect = subscription.AutoSelect
+	raw.Outbounds = normalizeSubscriptionOutbounds(subscription.Outbounds)
 	return configure.SetSubscription(subscription.ID-1, raw)
 }
 
@@ -287,40 +308,49 @@ func SelectServersFromSubscription(index int, shouldDisconnect bool) (err error)
 	subscriptionServer.Sub = index // Subscription IDs start with 0
 	subscriptionServer.Outbound = "proxy"
 
-	for i := 1; i < configure.GetLenSubscriptionServers(index)+1; i++ {
-		subscriptionServer.ID = i // Server IDs start with 1
-		sub := configure.GetSubscription(index)
-		if sub == nil {
-			return fmt.Errorf("SelectServersFromSubscription: subscription at index %d not found", index)
+	if shouldDisconnect {
+		connected := configure.GetConnectedServers()
+		if connected == nil {
+			return nil
 		}
-		serverObj := sub.Servers[i-1].ServerObj // ServerObj IDs start with 0
-		if serverObj == nil {
-			log.Warn("[AutoSelect] Skipping server %d in subscription %d: nil ServerObj", i, index)
-			continue
-		}
-		serverName := serverObj.GetName()
-
-		// Workaround for partial SS support in v2fly and xray
-		isSupported, _ := IsSupported(subscriptionServer)
-		if !isSupported {
-			log.Info("[AutoSelect] Skipping unsupported server %v", serverName)
-			continue
-		}
-
-		if shouldDisconnect {
-			err := Disconnect(subscriptionServer, true)
-			if err == nil {
-				log.Info("[AutoSelect] Disconnected from server: %v", serverName)
-			} else {
-				log.Error("[AutoSelect] Failed to disconnect from server: %v", serverName)
-				return err
+		for _, cs := range connected.Get() {
+			if cs.TYPE == configure.SubscriptionServerType && cs.Sub == index {
+				if err := Disconnect(*cs, false); err != nil {
+					log.Error("[AutoSelect] Failed to disconnect server from subscription %d (ID=%d): %v", index, cs.ID, err)
+					return err
+				}
 			}
-		} else {
+		}
+		return nil
+	}
+
+	sub := configure.GetSubscription(index)
+	if sub == nil {
+		return fmt.Errorf("SelectServersFromSubscription: subscription at index %d not found", index)
+	}
+	for _, outbound := range normalizeSubscriptionOutbounds(sub.Outbounds) {
+		subscriptionServer.Outbound = outbound
+		for i := 1; i < configure.GetLenSubscriptionServers(index)+1; i++ {
+			subscriptionServer.ID = i               // Server IDs start with 1
+			serverObj := sub.Servers[i-1].ServerObj // ServerObj IDs start with 0
+			if serverObj == nil {
+				log.Warn("[AutoSelect] Skipping server %d in subscription %d: nil ServerObj", i, index)
+				continue
+			}
+			serverName := serverObj.GetName()
+
+			// Workaround for partial SS support in v2fly and xray
+			isSupported, _ := IsSupported(subscriptionServer)
+			if !isSupported {
+				log.Info("[AutoSelect] Skipping unsupported server %v", serverName)
+				continue
+			}
+
 			err := Connect(&subscriptionServer)
 			if err == nil {
-				log.Info("[AutoSelect] Automatically selected server: %v", serverName)
+				log.Info("[AutoSelect] Automatically selected server in outbound %s: %v", outbound, serverName)
 			} else {
-				log.Error("[AutoSelect] Failed to connect to server: %v", serverName)
+				log.Error("[AutoSelect] Failed to connect to server in outbound %s: %v", outbound, serverName)
 				return err
 			}
 		}

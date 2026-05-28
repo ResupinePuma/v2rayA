@@ -1,12 +1,14 @@
 package controller
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/v2rayA/v2rayA/common"
 	"github.com/v2rayA/v2rayA/db/configure"
 	"github.com/v2rayA/v2rayA/pkg/util/log"
 	"github.com/v2rayA/v2rayA/server/service"
+	"io"
 )
 
 func PostConnection(ctx *gin.Context) {
@@ -24,14 +26,32 @@ func PostConnection(ctx *gin.Context) {
 		updatingMu.Unlock()
 	}()
 
-	var which configure.Which
-	err := ctx.ShouldBindJSON(&which)
+	body, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
 		common.ResponseError(ctx, logError("bad request"))
 		return
 	}
-	err = service.Connect(&which)
-	if err != nil {
+
+	var batch struct {
+		Outbound string            `json:"outbound"`
+		Touches  []configure.Which `json:"touches"`
+	}
+	if err = json.Unmarshal(body, &batch); err == nil && len(batch.Touches) > 0 {
+		if err = service.ReplaceOutboundConnections(batch.Outbound, batch.Touches); err != nil {
+			log.Warn("PostConnection(batch): %v", err)
+			common.ResponseError(ctx, logError(fmt.Errorf("failed to connect: %w", err)))
+			return
+		}
+		getTouch(ctx)
+		return
+	}
+
+	var which configure.Which
+	if err = json.Unmarshal(body, &which); err != nil {
+		common.ResponseError(ctx, logError("bad request"))
+		return
+	}
+	if err = service.Connect(&which); err != nil {
 		log.Warn("PostConnection: %v", err)
 		common.ResponseError(ctx, logError(fmt.Errorf("failed to connect: %w", err)))
 		return

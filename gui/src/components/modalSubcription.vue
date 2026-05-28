@@ -19,9 +19,16 @@
       </b-field>
       <b-field label="AUTO-SELECT">
         <b-checkbox
-	  v-model="which.autoSelect"
-	  >{{ $t("subscription.autoSelect") }}
-	</b-checkbox>
+          v-model="which.autoSelect"
+        >{{ $t("subscription.autoSelect") }}
+        </b-checkbox>
+      </b-field>
+      <b-field label="OUTBOUND GROUPS">
+        <b-select v-model="selectedOutbounds" multiple expanded native-size="4">
+          <option v-for="outbound in normalizedOutbounds" :key="outbound" :value="outbound">
+            {{ outbound }}
+          </option>
+        </b-select>
       </b-field>
     </section>
     <footer class="modal-card-foot flex-end">
@@ -45,10 +52,59 @@ export default {
         return null;
       },
     },
+    outbounds: {
+      type: Array,
+      default() {
+        return ["proxy"];
+      },
+    },
+  },
+  data() {
+    return {
+      selectedOutbounds: [],
+    };
+  },
+  computed: {
+    normalizedOutbounds() {
+      const seen = new Set();
+      const result = [];
+      for (const outbound of this.outbounds || []) {
+        if (typeof outbound !== "string") {
+          continue;
+        }
+        const name = outbound.trim();
+        if (!name || seen.has(name)) {
+          continue;
+        }
+        seen.add(name);
+        result.push(name);
+      }
+      if (!seen.has("proxy")) {
+        result.unshift("proxy");
+      }
+      return result;
+    },
+  },
+  watch: {
+    which: {
+      immediate: true,
+      handler(which) {
+        const outbounds = which && Array.isArray(which.outbounds) && which.outbounds.length
+          ? which.outbounds
+          : ["proxy"];
+        this.selectedOutbounds = outbounds.filter((x) => this.normalizedOutbounds.includes(x));
+        if (this.selectedOutbounds.length === 0) {
+          this.selectedOutbounds = ["proxy"];
+        }
+      },
+    },
   },
   methods: {
     handleClickSubmit() {
-      this.$emit("submit", this.which);
+      this.$emit("submit", {
+        ...this.which,
+        outbounds: this.selectedOutbounds.length ? this.selectedOutbounds : ["proxy"],
+      });
     },
   },
 };

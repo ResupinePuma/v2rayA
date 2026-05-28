@@ -409,6 +409,13 @@ func SetOutboundSetting(outbound string, setting OutboundSetting) (err error) {
 	if _, err := time.ParseDuration(setting.ProbeInterval); err != nil {
 		return err
 	}
+	if setting.Type == "" {
+		setting.Type = ObservatoryType(DefaultOutboundType)
+	}
+	setting.Type = ObservatoryType(strings.ToLower(setting.Type.String()))
+	if !IsSupportedObservatoryType(setting.Type) {
+		return fmt.Errorf("unsupported outbound strategy: %s", setting.Type)
+	}
 	return db.Set(fmt.Sprintf("outbound.%v", outbound), "setting", setting)
 }
 

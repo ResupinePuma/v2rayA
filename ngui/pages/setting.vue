@@ -143,7 +143,7 @@ const updateSetting = async() => {
     </div>
 
     <div v-show="setting.pacMode === 'gfwlist' || setting.transparent === 'gfwlist'">
-      <div>{{ $t('setting.options.off') }}</div>
+      <div>{{ `${$t('setting.autoUpdateGfwlist')} (min)` }}</div>
       <ElSelect v-model="setting.pacAutoUpdateMode" size="small">
         <ElOption value="none" :label="$t('setting.options.off')" />
         <ElOption value="auto_update" :label="$t('setting.options.updateGfwlistWhenStart')" />
@@ -152,14 +152,14 @@ const updateSetting = async() => {
         <ElInput
           v-if="setting.pacAutoUpdateMode === 'auto_update_at_intervals'"
           ref="autoUpdatePacInput"
-          v-model="setting.pacAutoUpdateIntervalHour"
+          v-model="setting.pacAutoUpdateIntervalMinute"
           type="number" min="1"
         />
       </ElSelect>
     </div>
 
     <div>
-      <div>{{ $t('setting.autoUpdateSub') }}</div>
+      <div>{{ `${$t('setting.autoUpdateSub')} (min)` }}</div>
       <ElSelect v-model="setting.subscriptionAutoUpdateMode" size="small">
         <ElOption value="none" :label="$t('setting.options.off')" />
         <ElOption value="auto_update" :label="$t('setting.options.updateSubWhenStart')" />
@@ -169,7 +169,7 @@ const updateSetting = async() => {
       <ElInput
         v-if="setting.subscriptionAutoUpdateMode === 'auto_update_at_intervals'"
         ref="autoUpdateSubInput"
-        v-model="setting.subscriptionAutoUpdateIntervalHour"
+        v-model="setting.subscriptionAutoUpdateIntervalMinute"
         type="number" min="1"
       />
     </div>

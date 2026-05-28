@@ -40,10 +40,15 @@ func ListSet(bucket string, key string, index int, val interface{}) (err error) 
 		address := parsed.Get("address").String()
 		status := parsed.Get("status").String()
 		info := parsed.Get("info").String()
+		outbounds := parsed.Get("outbounds").Raw
+		meta, _ := jsoniter.Marshal(map[string]interface{}{
+			"remarks":    parsed.Get("remarks").String(),
+			"autoSelect": parsed.Get("autoSelect").Bool(),
+		})
 
 		result, err := db.Exec(
-			"UPDATE subscriptions SET address = ?, status = ?, info = ?, updated_at = CURRENT_TIMESTAMP WHERE sort = ?",
-			address, status, info, index,
+			"UPDATE subscriptions SET address = ?, status = ?, info = ?, filter = ?, group_id = ?, updated_at = CURRENT_TIMESTAMP WHERE sort = ?",
+			address, status, info, string(meta), outbounds, index,
 		)
 		if err != nil {
 			return err
@@ -93,10 +98,10 @@ func ListGet(bucket string, key string, index int) (b []byte, err error) {
 		return []byte(configJSON), nil
 
 	case "touch/subscriptions":
-		var address, status, info string
+		var address, status, info, meta, outbounds string
 		err = db.QueryRow(
-			"SELECT address, status, info FROM subscriptions WHERE sort = ?", index,
-		).Scan(&address, &status, &info)
+			"SELECT address, status, info, filter, group_id FROM subscriptions WHERE sort = ?", index,
+		).Scan(&address, &status, &info, &meta, &outbounds)
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("ListGet: can't get element from an empty list")
 		}
@@ -123,10 +128,16 @@ func ListGet(bucket string, key string, index int) (b []byte, err error) {
 			servers = append(servers, gjson.Parse(s))
 		}
 
-		serversJSON, _ := jsoniter.Marshal(servers)
-		result := fmt.Sprintf(`{"address":"%s","status":"%s","info":"%s","servers":%s}`,
-			address, status, info, string(serversJSON))
-		return []byte(result), nil
+		result, _ := jsoniter.Marshal(map[string]interface{}{
+			"address":    address,
+			"status":     status,
+			"info":       info,
+			"remarks":    gjson.Parse(meta).Get("remarks").String(),
+			"autoSelect": gjson.Parse(meta).Get("autoSelect").Bool(),
+			"servers":    servers,
+			"outbounds":  gjson.Parse(outbounds).Value(),
+		})
+		return result, nil
 
 	default:
 		return nil, fmt.Errorf("ListGet: unsupported bucket/key: %s/%s", bucket, key)
@@ -182,14 +193,19 @@ func ListAppend(bucket string, key string, val interface{}) (err error) {
 				address := item.Get("address").String()
 				status := item.Get("status").String()
 				info := item.Get("info").String()
+				outbounds := item.Get("outbounds").Raw
+				meta, _ := jsoniter.Marshal(map[string]interface{}{
+					"remarks":    item.Get("remarks").String(),
+					"autoSelect": item.Get("autoSelect").Bool(),
+				})
 
 				var maxSort int
 				db.QueryRow("SELECT COALESCE(MAX(sort), -1) FROM subscriptions").Scan(&maxSort)
 				newSort := maxSort + 1
 
 				res, err := db.Exec(
-					"INSERT INTO subscriptions (address, status, info, sort) VALUES (?, ?, ?, ?)",
-					address, status, info, newSort,
+					"INSERT INTO subscriptions (address, status, info, filter, group_id, sort) VALUES (?, ?, ?, ?, ?, ?)",
+					address, status, info, string(meta), outbounds, newSort,
 				)
 				if err != nil {
 					return err
@@ -244,7 +260,7 @@ func ListGetAll(bucket string, key string) (list [][]byte, err error) {
 		return list, rows.Err()
 
 	case "touch/subscriptions":
-		rows, err := db.Query("SELECT id, address, status, info FROM subscriptions ORDER BY sort")
+		rows, err := db.Query("SELECT id, address, status, info, filter, group_id FROM subscriptions ORDER BY sort")
 		if err != nil {
 			return nil, err
 		}
@@ -252,8 +268,8 @@ func ListGetAll(bucket string, key string) (list [][]byte, err error) {
 
 		for rows.Next() {
 			var id int64
-			var address, status, info string
-			if err := rows.Scan(&id, &address, &status, &info); err != nil {
+			var address, status, info, meta, outbounds string
+			if err := rows.Scan(&id, &address, &status, &info, &meta, &outbounds); err != nil {
 				return nil, err
 			}
 
@@ -276,10 +292,16 @@ func ListGetAll(bucket string, key string) (list [][]byte, err error) {
 			}
 			serverRows.Close()
 
-			serversJSON, _ := jsoniter.Marshal(servers)
-			result := fmt.Sprintf(`{"address":"%s","status":"%s","info":"%s","servers":%s}`,
-				address, status, info, string(serversJSON))
-			list = append(list, []byte(result))
+			result, _ := jsoniter.Marshal(map[string]interface{}{
+				"address":    address,
+				"status":     status,
+				"info":       info,
+				"remarks":    gjson.Parse(meta).Get("remarks").String(),
+				"autoSelect": gjson.Parse(meta).Get("autoSelect").Bool(),
+				"servers":    servers,
+				"outbounds":  gjson.Parse(outbounds).Value(),
+			})
+			list = append(list, result)
 		}
 		return list, rows.Err()
 
