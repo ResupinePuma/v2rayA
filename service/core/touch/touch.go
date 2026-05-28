@@ -3,10 +3,10 @@ package touch
 import (
 	jsoniter "github.com/json-iterator/go"
 	"github.com/v2rayA/v2rayA/db/configure"
-	"github.com/v2rayA/v2rayA/pkg/util/log"
 	"net"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -26,17 +26,18 @@ type Server struct {
 	Address     string              `json:"address"`
 	Net         string              `json:"net"`
 	PingLatency string              `json:"pingLatency"`
+	IsDead      bool                `json:"isDead"`
 }
 type Subscription struct {
-	Remarks string              `json:"remarks,omitempty"`
-	ID      int                 `json:"id"`
-	TYPE    configure.TouchType `json:"_type"`
-	Host    string              `json:"host"`
-	Address string              `json:"address"`
-	Status  SubscriptionStatus  `json:"status"`
-	Info    string              `json:"info"`
-	Servers []Server            `json:"servers"`
-	AutoSelect bool             `json:"autoSelect"`
+	Remarks    string              `json:"remarks,omitempty"`
+	ID         int                 `json:"id"`
+	TYPE       configure.TouchType `json:"_type"`
+	Host       string              `json:"host"`
+	Address    string              `json:"address"`
+	Status     SubscriptionStatus  `json:"status"`
+	Info       string              `json:"info"`
+	Servers    []Server            `json:"servers"`
+	AutoSelect bool                `json:"autoSelect"`
 }
 
 func NewUpdateStatus() SubscriptionStatus {
@@ -59,9 +60,43 @@ func serverRawsToServers(rss []configure.ServerRaw) (ts []Server) {
 			Address:     address,
 			Net:         v.ServerObj.ProtoToShow(),
 			PingLatency: v.Latency,
+			IsDead:      isDeadLatency(v.Latency),
 		}
 	}
 	return
+}
+
+func isDeadLatency(latency string) bool {
+	if latency == "" {
+		return false
+	}
+	if strings.HasSuffix(latency, "ms") {
+		return false
+	}
+	return true
+}
+
+func parseSubscriptionHost(address string) string {
+	if strings.TrimSpace(address) == "" {
+		return ""
+	}
+	u, err := url.Parse(address)
+	if err == nil && u != nil && u.Host != "" {
+		return u.Host
+	}
+	// it may be OOCv1
+	tmp := make(map[string]string)
+	if err = jsoniter.Unmarshal([]byte(address), &tmp); err == nil {
+		if baseURL := strings.TrimSpace(tmp["baseUrl"]); baseURL != "" {
+			u, err = url.Parse(baseURL)
+			if err == nil && u != nil {
+				return u.Host
+			}
+		}
+	}
+	// Some subscription "address" values can be proxy links (not URL host-style),
+	// keep Touch generation resilient and avoid noisy warnings here.
+	return ""
 }
 
 // GenerateTouch generates a touch from database
@@ -70,31 +105,15 @@ func GenerateTouch() (t Touch) {
 	subscriptions := configure.GetSubscriptions()
 	t.Subscriptions = make([]Subscription, len(subscriptions))
 	for i, v := range subscriptions {
-		u, err := url.Parse(v.Address)
-		if err != nil {
-			// it may is OOCv1
-			tmp := make(map[string]string)
-			_ = jsoniter.Unmarshal([]byte(v.Address), &tmp)
-			if addr, ok := tmp["baseUrl"]; !ok {
-				log.Warn("%v", err)
-				continue
-			} else {
-				u, err = url.Parse(addr)
-				if err != nil {
-					log.Warn("%v", err)
-					continue
-				}
-			}
-		}
 		t.Subscriptions[i] = Subscription{
-			Remarks: v.Remarks,
-			ID:      i + 1,
-			Host:    u.Host,
-			Address: v.Address,
-			Status:  SubscriptionStatus(v.Status),
-			Servers: serverRawsToServers(v.Servers),
-			Info:    v.Info,
-			AutoSelect:  v.AutoSelect,
+			Remarks:    v.Remarks,
+			ID:         i + 1,
+			Host:       parseSubscriptionHost(v.Address),
+			Address:    v.Address,
+			Status:     SubscriptionStatus(v.Status),
+			Servers:    serverRawsToServers(v.Servers),
+			Info:       v.Info,
+			AutoSelect: v.AutoSelect,
 		}
 	}
 	t.ConnectedServers = configure.GetConnectedServers().Get()

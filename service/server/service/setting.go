@@ -51,12 +51,12 @@ func UpdateSetting(setting *configure.Setting) (err error) {
 		}
 	}
 	if setting.GFWListAutoUpdateMode == configure.AutoUpdateAtIntervals {
-		conf.TickerUpdateGFWList.Reset(time.Duration(setting.GFWListAutoUpdateIntervalHour) * time.Hour)
+		conf.TickerUpdateGFWList.Reset(time.Duration(setting.GFWListAutoUpdateDuration()) * time.Minute)
 	} else {
 		conf.TickerUpdateGFWList.Reset(24 * time.Hour * 365 * 100)
 	}
 	if setting.SubscriptionAutoUpdateMode == configure.AutoUpdateAtIntervals {
-		conf.TickerUpdateSubscription.Reset(time.Duration(setting.SubscriptionAutoUpdateIntervalHour) * time.Hour)
+		conf.TickerUpdateSubscription.Reset(time.Duration(setting.SubscriptionAutoUpdateDuration()) * time.Minute)
 	} else {
 		conf.TickerUpdateSubscription.Reset(24 * time.Hour * 365 * 100)
 	}

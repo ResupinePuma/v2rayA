@@ -8,6 +8,7 @@ let setting = $ref<{
   probeURL: string
   type: string
 }>()
+let supportedTypes = $ref<string[]>(['leastping', 'leastload', 'roundrobin', 'random', 'health'])
 
 const viewOutbound = async(outbound: string) => {
   isVisible = true
@@ -15,6 +16,8 @@ const viewOutbound = async(outbound: string) => {
   const { data } = await useV2Fetch(`outbound?outbound=${outbound}`).json()
 
   setting = data.value.data.setting
+  if (data.value?.data?.supportedTypes?.length)
+    supportedTypes = data.value.data.supportedTypes
 }
 
 const deleteOutbound = async(outbound: string) => {
@@ -45,8 +48,21 @@ const editOutbound = async(outbound: string) => {
 
   <ElDialog v-model="isVisible" :title="`${currentOutbound}- ${$t('common.outboundSetting')}`">
     <ElForm>
-      <ElFormItem v-for="(v, k) in setting" :key="k" v-model="setting" :label="k.toString()">
-        <ElInput v-model="setting![k]" />
+      <ElFormItem label="probeURL">
+        <ElInput v-model="setting!.probeURL" />
+      </ElFormItem>
+      <ElFormItem label="probeInterval">
+        <ElInput v-model="setting!.probeInterval" />
+      </ElFormItem>
+      <ElFormItem label="type">
+        <ElSelect v-model="setting!.type">
+          <ElOption
+            v-for="t in supportedTypes"
+            :key="t"
+            :label="t === 'health' ? 'health (alias of leastping)' : t"
+            :value="t"
+          />
+        </ElSelect>
       </ElFormItem>
     </ElForm>
     <template #footer>
