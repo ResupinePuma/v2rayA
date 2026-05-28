@@ -210,6 +210,12 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 		log.Warn("UpdateSubscription: %v: %v", err, subscriptionInfos)
 		return fmt.Errorf("UpdateSubscription: %v", reason)
 	}
+	if len(subscriptionInfos) == 0 {
+		log.Warn("UpdateSubscription: subscription %d resolved to 0 servers; keep existing servers and connections", index)
+		subscriptions[index].Status = string(touch.NewUpdateStatus())
+		subscriptions[index].Info = status
+		return configure.SetSubscription(index, &subscriptions[index])
+	}
 	infoServerRaws := make([]configure.ServerRaw, len(subscriptionInfos))
 	css := configure.GetConnectedServers()
 	cssAfter := css.Get()

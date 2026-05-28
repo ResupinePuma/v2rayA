@@ -290,35 +290,44 @@ func updateSubscriptions() {
 	subs := configure.GetSubscriptions()
 	lenSubs := len(subs)
 	control := make(chan struct{}, 2) // concurrency limit: update 2 subscriptions at a time
-	// Disconnect from subscriptions before auto-selecting servers from them
-	// to limit the number of connected servers and avoid hitting the limit
-	shouldDisconnect := true
-	err := service.AutoSelectServersFromSubscriptions(shouldDisconnect)
-	if err != nil {
-		log.Error("[AutoSelect] Failed to disconnect servers from subscriptions -- err: %v", err)
-	}
+	updated := make([]bool, lenSubs)
 	wg := new(sync.WaitGroup)
 	for i := 0; i < lenSubs; i++ {
 		wg.Add(1)
 		go func(i int) {
+			defer wg.Done()
 			control <- struct{}{}
-			err := service.UpdateSubscription(i, false)
+			defer func() { <-control }()
+			err := service.UpdateSubscription(i, true)
 			if err != nil {
 				log.Info("[AutoUpdate] Subscriptions: Failed to update subscription -- ID: %d, err: %v", i, err)
-			} else {
-				log.Info("[AutoUpdate] Subscriptions: Complete updating subscription -- ID: %d, Address: %s", i, subs[i].Address)
+				return
 			}
-			wg.Done()
-			<-control
+			updated[i] = true
+			log.Info("[AutoUpdate] Subscriptions: Complete updating subscription -- ID: %d, Address: %s", i, subs[i].Address)
 		}(i)
 	}
 	wg.Wait()
-	shouldDisconnect = false
-	err2 := service.AutoSelectServersFromSubscriptions(shouldDisconnect)
-	if err2 != nil {
-		log.Error("[AutoSelect] Failed to auto-select servers from subscriptions -- err: %v", err2)
+	for i := 0; i < lenSubs; i++ {
+		if !updated[i] {
+			continue
+		}
+		subscription := configure.GetSubscription(i)
+		if subscription == nil || !subscription.AutoSelect {
+			continue
+		}
+		if len(subscription.Servers) == 0 {
+			log.Warn("[AutoSelect] Subscription has 0 servers after update; keep previous outbound connections -- ID: %d", i)
+			continue
+		}
+		if err := service.SelectServersFromSubscription(i, true); err != nil {
+			log.Error("[AutoSelect] Failed to disconnect servers from subscription -- ID: %d, err: %v", i, err)
+			continue
+		}
+		if err := service.SelectServersFromSubscription(i, false); err != nil {
+			log.Error("[AutoSelect] Failed to auto-select servers from subscription -- ID: %d, err: %v", i, err)
+		}
 	}
-
 }
 
 func initUpdatingTicker() {
