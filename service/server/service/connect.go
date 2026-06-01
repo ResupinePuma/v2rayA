@@ -3,6 +3,8 @@ package service
 import (
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/v2rayA/v2rayA/core/ipforward"
 	"github.com/v2rayA/v2rayA/core/v2ray"
@@ -186,6 +188,153 @@ func Connect(which *configure.Which) (err error) {
 	return
 }
 
+func isUnexpectedTransportErr(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "unexpected transport type")
+}
+
+type removedWhichIndexes struct {
+	servers map[int]struct{}
+	subs    map[int]map[int]struct{}
+}
+
+func newRemovedWhichIndexes() removedWhichIndexes {
+	return removedWhichIndexes{servers: make(map[int]struct{}), subs: make(map[int]map[int]struct{})}
+}
+
+func (r removedWhichIndexes) add(wt configure.Which) {
+	switch wt.TYPE {
+	case configure.ServerType:
+		r.servers[wt.ID] = struct{}{}
+	case configure.SubscriptionServerType:
+		if _, ok := r.subs[wt.Sub]; !ok {
+			r.subs[wt.Sub] = make(map[int]struct{})
+		}
+		r.subs[wt.Sub][wt.ID] = struct{}{}
+	}
+}
+
+func (r removedWhichIndexes) contains(wt configure.Which) bool {
+	switch wt.TYPE {
+	case configure.ServerType:
+		_, ok := r.servers[wt.ID]
+		return ok
+	case configure.SubscriptionServerType:
+		ids, ok := r.subs[wt.Sub]
+		if !ok {
+			return false
+		}
+		_, ok = ids[wt.ID]
+		return ok
+	default:
+		return false
+	}
+}
+
+func (r removedWhichIndexes) adjust(wt configure.Which) (configure.Which, bool) {
+	if r.contains(wt) {
+		return wt, false
+	}
+	removedBefore := 0
+	switch wt.TYPE {
+	case configure.ServerType:
+		for id := range r.servers {
+			if id < wt.ID {
+				removedBefore++
+			}
+		}
+	case configure.SubscriptionServerType:
+		for id := range r.subs[wt.Sub] {
+			if id < wt.ID {
+				removedBefore++
+			}
+		}
+	}
+	wt.ID -= removedBefore
+	return wt, wt.ID > 0
+}
+
+func removeUnexpectedTransportNodes(toRemove []configure.Which) (removedWhichIndexes, error) {
+	removed := newRemovedWhichIndexes()
+	serverIDs := make(map[int]struct{})
+	subIDs := make(map[int]map[int]struct{})
+	for _, wt := range toRemove {
+		removed.add(wt)
+		switch wt.TYPE {
+		case configure.ServerType:
+			serverIDs[wt.ID-1] = struct{}{}
+		case configure.SubscriptionServerType:
+			if _, ok := subIDs[wt.Sub]; !ok {
+				subIDs[wt.Sub] = make(map[int]struct{})
+			}
+			subIDs[wt.Sub][wt.ID-1] = struct{}{}
+		}
+	}
+	if len(serverIDs) > 0 {
+		indexes := make([]int, 0, len(serverIDs))
+		for idx := range serverIDs {
+			indexes = append(indexes, idx)
+		}
+		sort.Sort(sort.Reverse(sort.IntSlice(indexes)))
+		if err := configure.RemoveServers(indexes); err != nil {
+			return removed, err
+		}
+	}
+	for sub, ids := range subIDs {
+		raw := configure.GetSubscription(sub)
+		if raw == nil {
+			continue
+		}
+		indexes := make([]int, 0, len(ids))
+		for idx := range ids {
+			indexes = append(indexes, idx)
+		}
+		sort.Sort(sort.Reverse(sort.IntSlice(indexes)))
+		for _, idx := range indexes {
+			if idx < 0 || idx >= len(raw.Servers) {
+				continue
+			}
+			raw.Servers = append(raw.Servers[:idx], raw.Servers[idx+1:]...)
+		}
+		if err := configure.SetSubscription(sub, raw); err != nil {
+			return removed, err
+		}
+	}
+	return removed, nil
+}
+
+func pruneUnexpectedTransportConnections(touches []configure.Which) ([]configure.Which, int, error) {
+	toRemove := make([]configure.Which, 0)
+	seenBad := make(map[string]struct{})
+	for _, wt := range touches {
+		_, err := IsSupported(wt)
+		if !isUnexpectedTransportErr(err) {
+			continue
+		}
+		key := fmt.Sprintf("%s/%d/%d", wt.TYPE, wt.ID, wt.Sub)
+		if _, ok := seenBad[key]; ok {
+			continue
+		}
+		seenBad[key] = struct{}{}
+		toRemove = append(toRemove, wt)
+	}
+	if len(toRemove) == 0 {
+		return touches, 0, nil
+	}
+	removed, err := removeUnexpectedTransportNodes(toRemove)
+	if err != nil {
+		return nil, 0, err
+	}
+	filtered := make([]configure.Which, 0, len(touches)-len(toRemove))
+	for _, wt := range touches {
+		adjusted, ok := removed.adjust(wt)
+		if !ok {
+			continue
+		}
+		filtered = append(filtered, adjusted)
+	}
+	return filtered, len(toRemove), nil
+}
+
 // ReplaceOutboundConnections atomically replaces members of one outbound group.
 // It updates v2ray config once after DB changes, and rolls back on failure.
 func ReplaceOutboundConnections(outbound string, touches []configure.Which) (err error) {
@@ -231,6 +380,18 @@ func ReplaceOutboundConnections(outbound string, touches []configure.Which) (err
 		}
 		seen[key] = struct{}{}
 		normalized = append(normalized, wt)
+	}
+
+	var removedUnsupported int
+	normalized, removedUnsupported, err = pruneUnexpectedTransportConnections(normalized)
+	if err != nil {
+		return err
+	}
+	if removedUnsupported > 0 {
+		log.Warn("ReplaceOutboundConnections: removed %d node(s) with unexpected transport type from outbound %s", removedUnsupported, outbound)
+	}
+	if len(normalized) == 0 {
+		return fmt.Errorf("all selected servers were removed due to unexpected transport type")
 	}
 
 	backup := configure.GetConnectedServersByOutbound(outbound)

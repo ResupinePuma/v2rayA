@@ -406,9 +406,13 @@ func RefreshAutoSelectedServersFromSubscription(index int) error {
 					continue
 				}
 				wt := configure.Which{TYPE: configure.SubscriptionServerType, Sub: index, ID: i + 1, Outbound: outbound}
-				isSupported, _ := IsSupported(wt)
+				isSupported, supportErr := IsSupported(wt)
 				if !isSupported {
-					log.Info("[AutoSelect] Skipping unsupported server %v", server.ServerObj.GetName())
+					if isUnexpectedTransportErr(supportErr) {
+						next = append(next, wt)
+					} else {
+						log.Info("[AutoSelect] Skipping unsupported server %v", server.ServerObj.GetName())
+					}
 					continue
 				}
 				next = append(next, wt)
