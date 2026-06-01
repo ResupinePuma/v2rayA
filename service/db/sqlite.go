@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,7 @@ var (
 	dbPath   string
 	readOnly bool
 	IsNewDB  bool // true if the database was just created (no pre-existing file)
+	writeMu  sync.Mutex
 )
 
 // ErrNeedMigration is returned when an old BoltDB database is detected,
@@ -70,7 +72,7 @@ func initDB() {
 	if err = validateSQLiteDriver(); err != nil {
 		log.Fatal("SQLite driver is unavailable: %v", err)
 	}
-	sqlDB, err = sql.Open(sqliteDriverName, dbPath)
+	sqlDB, err = sql.Open(sqliteDriverName, sqliteDSN(dbPath))
 	if err != nil {
 		log.Fatal("sql.Open: %v", err)
 	}
@@ -98,6 +100,10 @@ func initDB() {
 	if err := InitSchema(sqlDB); err != nil {
 		log.Fatal("InitSchema: %v", err)
 	}
+}
+
+func sqliteDSN(path string) string {
+	return "file:" + url.PathEscape(path) + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
 }
 
 // GetDB returns the singleton SQLite database connection
@@ -170,25 +176,31 @@ func IsBusyError(err error) bool {
 }
 
 func retryDelay(attempt int) time.Duration {
-	return time.Duration(attempt+1) * 50 * time.Millisecond
+	delay := time.Duration(attempt+1) * 100 * time.Millisecond
+	if delay > time.Second {
+		return time.Second
+	}
+	return delay
 }
 
 func WithBusyRetry(fn func() error) error {
+	deadline := time.Now().Add(15 * time.Second)
 	var err error
-	for attempt := 0; attempt < 5; attempt++ {
+	for attempt := 0; ; attempt++ {
 		err = fn()
-		if !IsBusyError(err) {
+		if !IsBusyError(err) || time.Now().After(deadline) {
 			return err
 		}
 		time.Sleep(retryDelay(attempt))
 	}
-	return err
 }
 
 // ReadModifyWrite executes a function within a read-write transaction.
 // If the function returns an error, the transaction is rolled back.
 // Otherwise, the transaction is committed.
 func ReadModifyWrite(fn func(tx *sql.Tx) error) error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
 	return WithBusyRetry(func() error {
 		db := GetDB()
 		tx, err := db.Begin()

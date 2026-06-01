@@ -3,9 +3,46 @@ package configure
 import (
 	"database/sql"
 	"fmt"
+	"sync"
 
 	"github.com/v2rayA/v2rayA/db"
 )
+
+var connectedServersCache = struct {
+	sync.RWMutex
+	byOutbound map[string]*Whiches
+}{byOutbound: make(map[string]*Whiches)}
+
+func cloneWhiches(ws *Whiches) *Whiches {
+	if ws == nil {
+		return nil
+	}
+	clone := &Whiches{Touches: make([]*Which, 0, ws.Len())}
+	for _, wt := range ws.Get() {
+		if wt == nil {
+			continue
+		}
+		copy := *wt
+		clone.Touches = append(clone.Touches, &copy)
+	}
+	return clone
+}
+
+func getConnectedServersCache(outbound string) *Whiches {
+	connectedServersCache.RLock()
+	defer connectedServersCache.RUnlock()
+	return cloneWhiches(connectedServersCache.byOutbound[outbound])
+}
+
+func setConnectedServersCache(outbound string, ws *Whiches) {
+	connectedServersCache.Lock()
+	defer connectedServersCache.Unlock()
+	if ws == nil || ws.Len() == 0 {
+		delete(connectedServersCache.byOutbound, outbound)
+		return
+	}
+	connectedServersCache.byOutbound[outbound] = cloneWhiches(ws)
+}
 
 type dbServerRef struct {
 	id       int64
@@ -99,8 +136,15 @@ func getConnectedServersByOutbound(outbound string) (*Whiches, error) {
 		return nil
 	})
 	if err != nil {
+		if db.IsBusyError(err) {
+			if cached := getConnectedServersCache(outbound); cached != nil {
+				return cached, nil
+			}
+			return &Whiches{}, nil
+		}
 		return nil, err
 	}
+	setConnectedServersCache(outbound, whiches)
 	if whiches.Len() == 0 {
 		legacy, migrated := migrateLegacyConnectedServers(outbound)
 		if migrated {
@@ -158,17 +202,21 @@ func isWhichInRange(wt Which) bool {
 }
 
 func clearConnects(outbound string) error {
-	return db.ReadModifyWrite(func(tx *sql.Tx) error {
+	err := db.ReadModifyWrite(func(tx *sql.Tx) error {
 		if err := ensureOutboundTx(tx, outbound); err != nil {
 			return err
 		}
 		_, err := tx.Exec("DELETE FROM outbound_connections WHERE outbound_name = ?", outbound)
 		return err
 	})
+	if err == nil {
+		setConnectedServersCache(outbound, nil)
+	}
+	return err
 }
 
 func addConnect(wt Which) error {
-	return db.ReadModifyWrite(func(tx *sql.Tx) error {
+	err := db.ReadModifyWrite(func(tx *sql.Tx) error {
 		if wt.Outbound == "" {
 			wt.Outbound = "proxy"
 		}
@@ -186,10 +234,14 @@ func addConnect(wt Which) error {
 		_, err = tx.Exec("INSERT OR IGNORE INTO outbound_connections (outbound_name, server_id, sort) VALUES (?, ?, ?)", wt.Outbound, serverID, nextSort)
 		return err
 	})
+	if err == nil {
+		setConnectedServersCache(wt.Outbound, nil)
+	}
+	return err
 }
 
 func replaceConnects(outbound string, touches []Which) error {
-	return db.ReadModifyWrite(func(tx *sql.Tx) error {
+	err := db.ReadModifyWrite(func(tx *sql.Tx) error {
 		if err := ensureOutboundTx(tx, outbound); err != nil {
 			return err
 		}
@@ -217,10 +269,20 @@ func replaceConnects(outbound string, touches []Which) error {
 		}
 		return nil
 	})
+	if err == nil {
+		ws := &Whiches{}
+		for i := range touches {
+			wt := touches[i]
+			wt.Outbound = outbound
+			ws.Add(wt)
+		}
+		setConnectedServersCache(outbound, ws)
+	}
+	return err
 }
 
 func removeConnect(wt Which) error {
-	return db.ReadModifyWrite(func(tx *sql.Tx) error {
+	err := db.ReadModifyWrite(func(tx *sql.Tx) error {
 		if wt.Outbound == "" {
 			wt.Outbound = "proxy"
 		}
@@ -245,4 +307,8 @@ func removeConnect(wt Which) error {
 			WHERE outbound_name = ?`, wt.Outbound)
 		return err
 	})
+	if err == nil {
+		setConnectedServersCache(wt.Outbound, nil)
+	}
+	return err
 }
