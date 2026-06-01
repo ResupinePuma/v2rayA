@@ -4,7 +4,7 @@ const TemplateJson = `
 {
     "inbounds": [
         {
-            "port": 20170,
+            "port": 0,
             "listen": "0.0.0.0",
             "protocol": "socks",
             "sniffing": {
@@ -24,7 +24,7 @@ const TemplateJson = `
             "tag": "socks"
         },
         {
-            "port": 20171,
+            "port": 0,
             "listen": "0.0.0.0",
             "protocol": "http",
             "sniffing": {
@@ -37,7 +37,7 @@ const TemplateJson = `
             "tag": "http"
         },
         {
-            "port": 0,
+            "port": 20170,
             "listen": "0.0.0.0",
             "protocol": "socks",
             "sniffing": {
@@ -57,7 +57,7 @@ const TemplateJson = `
             "tag": "rule-socks"
         },
         {
-            "port": 20172,
+            "port": 20171,
             "listen": "0.0.0.0",
             "protocol": "http",
             "sniffing": {

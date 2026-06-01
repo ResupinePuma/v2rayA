@@ -35,15 +35,9 @@ func New() *Configure {
 		ConnectedServers: make([]*Which, 0),
 		Setting:          NewSetting(),
 		Accounts:         map[string]string{},
-		Ports: Ports{
-			Socks5:        20170,
-			Socks5WithPac: 0,
-			Http:          20171,
-			HttpWithPac:   20172,
-			Vmess:         0,
-		},
-		RoutingA:        nil,
-		DomainsExcluded: nil,
+		Ports:            NewPorts(),
+		RoutingA:         nil,
+		DomainsExcluded:  nil,
 	}
 }
 func decode(b []byte) (result []byte) {
@@ -201,16 +195,11 @@ func GetSettingNotNil() *Setting {
 }
 func GetPortsNotNil() *Ports {
 	p := new(Ports)
-	_ = db.Get("system", "ports", &p)
-	if p == nil {
-		p = new(Ports)
-		p.Socks5 = 20170
-		p.Http = 20171
-		p.Socks5WithPac = 0
-		p.HttpWithPac = 20172
-		p.Vmess = 0
-		p.Api = ApiPort{Port: 0}
+	if err := db.Get("system", "ports", &p); err != nil || p == nil {
+		defaults := NewPorts()
+		p = &defaults
 	}
+	NormalizePorts(p)
 	return p
 }
 func GetCustomPacNotNil() *CustomPac {
