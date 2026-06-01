@@ -242,14 +242,8 @@ func ReplaceOutboundConnections(outbound string, touches []configure.Which) (err
 		}
 	}
 
-	if err = configure.ClearConnects(outbound); err != nil {
+	if err = configure.ReplaceConnects(outbound, normalized); err != nil {
 		return err
-	}
-	for _, wt := range normalized {
-		if err = configure.AddConnect(wt); err != nil {
-			restore()
-			return err
-		}
 	}
 
 	if v2ray.ProcessManager.Running() {

@@ -8,9 +8,32 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// subscriptionIDBySortTx returns the stable SQLite subscription ID for a UI sort index.
+func subscriptionIDBySortTx(tx *sql.Tx, index int) (int64, error) {
+	var subID int64
+	err := tx.QueryRow("SELECT id FROM subscriptions WHERE sort = ?", index).Scan(&subID)
+	if err == sql.ErrNoRows {
+		return 0, fmt.Errorf("subscription at index %d not found", index)
+	}
+	return subID, err
+}
+
+func serverIdentity(raw string) string {
+	parsed := gjson.Parse(raw)
+	if serverObj := parsed.Get("serverObj").Raw; serverObj != "" {
+		return serverObj
+	}
+	return raw
+}
+
+type storedSubscriptionServer struct {
+	id  int64
+	key string
+}
+
 // ListSet sets an element at a specific index in a list.
 func ListSet(bucket string, key string, index int, val interface{}) (err error) {
-	db := GetDB()
+	database := GetDB()
 
 	switch bucket + "/" + key {
 	case "touch/servers":
@@ -18,7 +41,7 @@ func ListSet(bucket string, key string, index int, val interface{}) (err error) 
 		if err != nil {
 			return err
 		}
-		result, err := db.Exec(
+		result, err := database.Exec(
 			"UPDATE servers SET config_json = ?, updated_at = CURRENT_TIMESTAMP WHERE type = 'server' AND sort = ?",
 			string(b), index,
 		)
@@ -46,33 +69,82 @@ func ListSet(bucket string, key string, index int, val interface{}) (err error) 
 			"autoSelect": parsed.Get("autoSelect").Bool(),
 		})
 
-		result, err := db.Exec(
-			"UPDATE subscriptions SET address = ?, status = ?, info = ?, filter = ?, group_id = ?, updated_at = CURRENT_TIMESTAMP WHERE sort = ?",
-			address, status, info, string(meta), outbounds, index,
-		)
-		if err != nil {
-			return err
-		}
-		rows, _ := result.RowsAffected()
-		if rows == 0 {
-			return fmt.Errorf("ListSet: subscription at index %d not found", index)
-		}
+		return ReadModifyWrite(func(tx *sql.Tx) error {
+			subID, err := subscriptionIDBySortTx(tx, index)
+			if err != nil {
+				return fmt.Errorf("ListSet: %w", err)
+			}
 
-		// Update servers within this subscription
-		subID := int64(index + 1)
-		db.Exec("DELETE FROM servers WHERE type = 'subscription_server' AND sub_id = ?", subID)
-
-		servers := parsed.Get("servers").Array()
-		for j, s := range servers {
-			_, err := db.Exec(
-				"INSERT INTO servers (type, sub_id, config_json, sort) VALUES ('subscription_server', ?, ?, ?)",
-				subID, s.Raw, j,
+			_, err = tx.Exec(
+				"UPDATE subscriptions SET address = ?, status = ?, info = ?, filter = ?, group_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+				address, status, info, string(meta), outbounds, subID,
 			)
 			if err != nil {
-				return fmt.Errorf("ListSet: failed to update subscription server %d/%d: %w", index, j, err)
+				return err
 			}
-		}
-		return nil
+
+			oldRows, err := tx.Query("SELECT id, config_json FROM servers WHERE type = 'subscription_server' AND sub_id = ? ORDER BY sort, id", subID)
+			if err != nil {
+				return err
+			}
+			oldByKey := make(map[string][]storedSubscriptionServer)
+			var oldIDs []int64
+			for oldRows.Next() {
+				var old storedSubscriptionServer
+				var raw string
+				if err := oldRows.Scan(&old.id, &raw); err != nil {
+					oldRows.Close()
+					return err
+				}
+				old.key = serverIdentity(raw)
+				oldByKey[old.key] = append(oldByKey[old.key], old)
+				oldIDs = append(oldIDs, old.id)
+			}
+			if err := oldRows.Err(); err != nil {
+				oldRows.Close()
+				return err
+			}
+			oldRows.Close()
+
+			kept := make(map[int64]struct{})
+			servers := parsed.Get("servers").Array()
+			for j, s := range servers {
+				identity := serverIdentity(s.Raw)
+				if queue := oldByKey[identity]; len(queue) > 0 {
+					old := queue[0]
+					oldByKey[identity] = queue[1:]
+					if _, err := tx.Exec(
+						"UPDATE servers SET config_json = ?, sort = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+						s.Raw, j, old.id,
+					); err != nil {
+						return fmt.Errorf("ListSet: failed to update subscription server %d/%d: %w", index, j, err)
+					}
+					kept[old.id] = struct{}{}
+					continue
+				}
+
+				_, err := tx.Exec(
+					"INSERT INTO servers (type, sub_id, config_json, sort) VALUES ('subscription_server', ?, ?, ?)",
+					subID, s.Raw, j,
+				)
+				if err != nil {
+					return fmt.Errorf("ListSet: failed to insert subscription server %d/%d: %w", index, j, err)
+				}
+			}
+
+			for _, oldID := range oldIDs {
+				if _, ok := kept[oldID]; ok {
+					continue
+				}
+				if _, err := tx.Exec("DELETE FROM outbound_connections WHERE server_id = ?", oldID); err != nil {
+					return err
+				}
+				if _, err := tx.Exec("DELETE FROM servers WHERE id = ?", oldID); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
 
 	default:
 		return fmt.Errorf("ListSet: unsupported bucket/key: %s/%s", bucket, key)
@@ -98,10 +170,11 @@ func ListGet(bucket string, key string, index int) (b []byte, err error) {
 		return []byte(configJSON), nil
 
 	case "touch/subscriptions":
+		var subID int64
 		var address, status, info, meta, outbounds string
 		err = db.QueryRow(
-			"SELECT address, status, info, filter, group_id FROM subscriptions WHERE sort = ?", index,
-		).Scan(&address, &status, &info, &meta, &outbounds)
+			"SELECT id, address, status, info, filter, group_id FROM subscriptions WHERE sort = ?", index,
+		).Scan(&subID, &address, &status, &info, &meta, &outbounds)
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("ListGet: can't get element from an empty list")
 		}
@@ -112,7 +185,7 @@ func ListGet(bucket string, key string, index int) (b []byte, err error) {
 		// Reconstruct the subscription JSON with servers
 		rows, err := db.Query(
 			"SELECT config_json FROM servers WHERE type = 'subscription_server' AND sub_id = ? ORDER BY sort",
-			int64(index+1),
+			subID,
 		)
 		if err != nil {
 			return nil, err
@@ -321,7 +394,18 @@ func ListRemove(bucket, key string, indexes []int) error {
 	switch bucket + "/" + key {
 	case "touch/servers":
 		for _, idx := range indexes {
-			_, err := db.Exec("DELETE FROM servers WHERE type = 'server' AND sort = ?", idx)
+			var serverID int64
+			err := db.QueryRow("SELECT id FROM servers WHERE type = 'server' AND sort = ?", idx).Scan(&serverID)
+			if err != nil {
+				if err == sql.ErrNoRows {
+					continue
+				}
+				return err
+			}
+			if _, err := db.Exec("DELETE FROM outbound_connections WHERE server_id = ?", serverID); err != nil {
+				return err
+			}
+			_, err = db.Exec("DELETE FROM servers WHERE id = ?", serverID)
 			if err != nil {
 				return err
 			}
@@ -343,6 +427,9 @@ func ListRemove(bucket, key string, indexes []int) error {
 				if err == sql.ErrNoRows {
 					continue
 				}
+				return err
+			}
+			if _, err := db.Exec("DELETE FROM outbound_connections WHERE server_id IN (SELECT id FROM servers WHERE type = 'subscription_server' AND sub_id = ?)", subID); err != nil {
 				return err
 			}
 			_, err = db.Exec("DELETE FROM servers WHERE type = 'subscription_server' AND sub_id = ?", subID)

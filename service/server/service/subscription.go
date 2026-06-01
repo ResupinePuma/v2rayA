@@ -218,14 +218,14 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 	}
 	infoServerRaws := make([]configure.ServerRaw, len(subscriptionInfos))
 	css := configure.GetConnectedServers()
-	cssAfter := css.Get()
 	// serverObj.ServerObj is a pointer(interface), and shouldn't be as a key
 	link2Raw := make(map[string]*configure.ServerRaw)
-	connectedVmessInfo2CssIndex := make(map[string][]int)
-	for i, cs := range css.Get() {
+	connectedVmessInfo := make(map[string]struct{})
+	for _, cs := range css.Get() {
 		if cs.TYPE == configure.SubscriptionServerType && cs.Sub == index {
 			if sRaw, err := cs.LocateServerRaw(); err != nil {
-				return err
+				log.Warn("UpdateSubscription: skipping stale connected server (Sub=%d, ID=%d, outbound=%s): %v", cs.Sub, cs.ID, cs.Outbound, err)
+				continue
 			} else {
 				if sRaw.ServerObj == nil {
 					log.Warn("UpdateSubscription: skipping connected server with nil ServerObj (Sub=%d, ID=%d)", cs.Sub, cs.ID)
@@ -233,7 +233,7 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 				}
 				link := sRaw.ServerObj.ExportToURL()
 				link2Raw[link] = sRaw
-				connectedVmessInfo2CssIndex[link] = append(connectedVmessInfo2CssIndex[link], i)
+				connectedVmessInfo[link] = struct{}{}
 			}
 		}
 	}
@@ -243,32 +243,17 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 			ServerObj: info,
 		}
 		link := infoServerRaw.ServerObj.ExportToURL()
-		if cssIndexes, ok := connectedVmessInfo2CssIndex[link]; ok {
-			for _, cssIndex := range cssIndexes {
-				cssAfter[cssIndex].ID = i + 1
-			}
-			delete(connectedVmessInfo2CssIndex, link)
+		if _, ok := connectedVmessInfo[link]; ok {
+			delete(connectedVmessInfo, link)
 		}
 		infoServerRaws[i] = infoServerRaw
 	}
-	for link, cssIndexes := range connectedVmessInfo2CssIndex {
-		for _, cssIndex := range cssIndexes {
-			if disconnectIfNecessary {
-				err = Disconnect(*css.Get()[cssIndex], false)
-				if err != nil {
-					reason := "failed to disconnect previous server"
-					return fmt.Errorf("UpdateSubscription: %v", reason)
-				}
-			} else {
-				// Append previously connected node
-				// TODO: may need consideration when ServerRaw changes
-				infoServerRaws = append(infoServerRaws, *link2Raw[link])
-				cssAfter[cssIndex].ID = len(infoServerRaws)
-			}
+	for link := range connectedVmessInfo {
+		if !disconnectIfNecessary {
+			// Append previously connected node so its stable DB row/connection can be preserved.
+			// TODO: may need consideration when ServerRaw changes
+			infoServerRaws = append(infoServerRaws, *link2Raw[link])
 		}
-	}
-	if err := configure.OverwriteConnects(configure.NewWhiches(cssAfter)); err != nil {
-		return err
 	}
 	subscriptions[index].Servers = infoServerRaws
 	subscriptions[index].Status = string(touch.NewUpdateStatus())

@@ -265,15 +265,18 @@ func GetConnectedServers() (wts *Whiches) {
 	return wts
 }
 func GetConnectedServersByOutbound(outbound string) *Whiches {
-	r := new(Whiches)
 	if outbound == "" {
 		outbound = "proxy"
 	}
-	bucket := fmt.Sprintf("outbound.%v", outbound)
-	if err := db.Get(bucket, "connectedServers", r); err != nil {
+	whiches, err := getConnectedServersByOutbound(outbound)
+	if err != nil {
+		log.Warn("GetConnectedServersByOutbound(%s): %v", outbound, err)
 		return nil
 	}
-	return r
+	if whiches.Len() == 0 {
+		return nil
+	}
+	return whiches
 }
 
 func GetLenSubscriptions() int {
@@ -301,39 +304,37 @@ func ClearConnects(outbound string) error {
 	if outbound == "" {
 		outbound = "proxy"
 	}
-	return db.Set(fmt.Sprintf("outbound.%v", outbound), "connectedServers", nil)
+	return clearConnects(outbound)
 }
 func AddConnect(wt Which) (err error) {
 	if wt.Outbound == "" {
 		wt.Outbound = "proxy"
 	}
-	bucket := fmt.Sprintf("outbound.%v", wt.Outbound)
-	var wcs Whiches
-	_ = db.Get(bucket, "connectedServers", &wcs)
-	// Normalize Outbound field of existing entries for consistent comparison
-	for _, v := range wcs.Get() {
-		if v.Outbound == "" {
-			v.Outbound = "proxy"
-		}
-		if v.EqualTo(wt) {
-			return nil
-		}
-	}
-	wcs.Add(wt)
-	return db.Set(bucket, "connectedServers", wcs)
+	return addConnect(wt)
 }
 
-// OverwriteConnects will replace each outbounds contained in given ws with whiches in the ws
+// ReplaceConnects atomically replaces all connections for the given outbound.
+func ReplaceConnects(outbound string, touches []Which) error {
+	if outbound == "" {
+		outbound = "proxy"
+	}
+	return replaceConnects(outbound, touches)
+}
+
+// OverwriteConnects will replace each outbounds contained in given ws with whiches in the ws.
 func OverwriteConnects(ws *Whiches) (err error) {
-	outWs := make(map[string][]*Which)
+	outWs := make(map[string][]Which)
 	for _, w := range ws.Get() {
-		outWs[w.Outbound] = append(outWs[w.Outbound], w)
+		outbound := w.Outbound
+		if outbound == "" {
+			outbound = "proxy"
+		}
+		ww := *w
+		ww.Outbound = outbound
+		outWs[outbound] = append(outWs[outbound], ww)
 	}
 	for out, ws := range outWs {
-		whiches := new(Whiches)
-		whiches.Touches = ws
-		bucket := fmt.Sprintf("outbound.%v", out)
-		if err := db.Set(bucket, "connectedServers", whiches); err != nil {
+		if err := ReplaceConnects(out, ws); err != nil {
 			return err
 		}
 	}
@@ -344,22 +345,7 @@ func RemoveConnect(wt Which) (err error) {
 	if wt.Outbound == "" {
 		wt.Outbound = "proxy"
 	}
-	bucket := fmt.Sprintf("outbound.%v", wt.Outbound)
-	var wcs Whiches
-	_ = db.Get(bucket, "connectedServers", &wcs)
-	// Normalize Outbound field of existing entries for consistent comparison
-	for _, v := range wcs.Touches {
-		if v.Outbound == "" {
-			v.Outbound = "proxy"
-		}
-	}
-	for i, v := range wcs.Touches {
-		if v.EqualTo(wt) {
-			wcs.Touches = append(wcs.Touches[:i], wcs.Touches[i+1:]...)
-			return db.Set(bucket, "connectedServers", wcs)
-		}
-	}
-	return fmt.Errorf("given server cannot be found in database")
+	return removeConnect(wt)
 }
 
 func GetOutbounds() (outbounds []string) {
