@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/v2rayA/v2rayA/conf"
 	"github.com/v2rayA/v2rayA/pkg/util/log"
@@ -72,6 +74,11 @@ func initDB() {
 	if err != nil {
 		log.Fatal("sql.Open: %v", err)
 	}
+	// Keep the pool small: SQLite has a single-writer model, while multiple
+	// read connections are still useful and avoid self-deadlocks in tests that
+	// compile packages with init-time DB access.
+	sqlDB.SetMaxOpenConns(4)
+	sqlDB.SetMaxIdleConns(4)
 
 	// Configure PRAGMAs for WAL mode and performance
 	pragmas := []string{
@@ -150,27 +157,57 @@ func Close() error {
 	return nil
 }
 
+// IsBusyError reports whether err is a transient SQLite busy/locked error.
+func IsBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "database table is locked") ||
+		strings.Contains(msg, "sqlite_busy") ||
+		strings.Contains(msg, "sqlite_locked")
+}
+
+func retryDelay(attempt int) time.Duration {
+	return time.Duration(attempt+1) * 50 * time.Millisecond
+}
+
+func WithBusyRetry(fn func() error) error {
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		err = fn()
+		if !IsBusyError(err) {
+			return err
+		}
+		time.Sleep(retryDelay(attempt))
+	}
+	return err
+}
+
 // ReadModifyWrite executes a function within a read-write transaction.
 // If the function returns an error, the transaction is rolled back.
 // Otherwise, the transaction is committed.
 func ReadModifyWrite(fn func(tx *sql.Tx) error) error {
-	db := GetDB()
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-
-	defer func() {
-		if p := recover(); p != nil {
-			_ = tx.Rollback()
-			panic(p)
+	return WithBusyRetry(func() error {
+		db := GetDB()
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("failed to begin transaction: %w", err)
 		}
-	}()
 
-	if err := fn(tx); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
+		defer func() {
+			if p := recover(); p != nil {
+				_ = tx.Rollback()
+				panic(p)
+			}
+		}()
 
-	return tx.Commit()
+		if err := fn(tx); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+
+		return tx.Commit()
+	})
 }

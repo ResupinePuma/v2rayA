@@ -349,6 +349,92 @@ func SelectServersFromSubscription(index int, shouldDisconnect bool) (err error)
 	return nil
 }
 
+// RefreshAutoSelectedServersFromSubscription replaces the selected servers for one
+// subscription without an intermediate disconnect phase. This is important for
+// RoutingA-dependent outbounds: when an outbound currently has a single server,
+// deleting it first makes config generation fail before the new servers are added.
+func RefreshAutoSelectedServersFromSubscription(index int) error {
+	sub := configure.GetSubscription(index)
+	if sub == nil {
+		return fmt.Errorf("RefreshAutoSelectedServersFromSubscription: subscription at index %d not found", index)
+	}
+	if len(sub.Servers) == 0 {
+		log.Warn("[AutoSelect] Subscription %d has 0 servers; keep existing outbound connections", index)
+		return nil
+	}
+
+	targetOutbounds := normalizeSubscriptionOutbounds(sub.Outbounds)
+	outboundSet := make(map[string]struct{}, len(targetOutbounds))
+	for _, outbound := range targetOutbounds {
+		outboundSet[outbound] = struct{}{}
+	}
+
+	// Also refresh outbounds that currently contain servers from this subscription;
+	// this removes stale membership if the subscription was moved to another group.
+	for _, outbound := range configure.GetOutbounds() {
+		connected := configure.GetConnectedServersByOutbound(outbound)
+		if connected == nil {
+			continue
+		}
+		for _, wt := range connected.Get() {
+			if wt.TYPE == configure.SubscriptionServerType && wt.Sub == index {
+				outboundSet[outbound] = struct{}{}
+				break
+			}
+		}
+	}
+
+	for outbound := range outboundSet {
+		connected := configure.GetConnectedServersByOutbound(outbound)
+		preserved := make([]configure.Which, 0)
+		if connected != nil {
+			for _, wt := range connected.Get() {
+				if wt.TYPE == configure.SubscriptionServerType && wt.Sub == index {
+					continue
+				}
+				copy := *wt
+				copy.Outbound = outbound
+				preserved = append(preserved, copy)
+			}
+		}
+
+		next := preserved
+		if shouldSelect := stringSetContains(targetOutbounds, outbound); shouldSelect {
+			for i, server := range sub.Servers {
+				if server.ServerObj == nil {
+					log.Warn("[AutoSelect] Skipping server %d in subscription %d: nil ServerObj", i+1, index)
+					continue
+				}
+				wt := configure.Which{TYPE: configure.SubscriptionServerType, Sub: index, ID: i + 1, Outbound: outbound}
+				isSupported, _ := IsSupported(wt)
+				if !isSupported {
+					log.Info("[AutoSelect] Skipping unsupported server %v", server.ServerObj.GetName())
+					continue
+				}
+				next = append(next, wt)
+			}
+		}
+
+		if len(next) == 0 {
+			log.Warn("[AutoSelect] Refresh for outbound %s would leave it empty; keep existing connections", outbound)
+			continue
+		}
+		if err := ReplaceOutboundConnections(outbound, next); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func stringSetContains(values []string, value string) bool {
+	for _, v := range values {
+		if v == value {
+			return true
+		}
+	}
+	return false
+}
+
 func AutoSelectServersFromSubscriptions(shouldDisconnect bool) (err error) {
 	for i := 0; i < configure.GetLenSubscriptions(); i++ {
 		subscription := configure.GetSubscription(i)

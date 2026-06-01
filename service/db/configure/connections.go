@@ -54,43 +54,51 @@ func resolveWhichServerIDTx(tx *sql.Tx, wt Which) (int64, error) {
 }
 
 func getConnectedServersByOutbound(outbound string) (*Whiches, error) {
-	rows, err := db.GetDB().Query(`
-		SELECT oc.server_id, s.type, s.sort, COALESCE(sub.sort, -1)
-		FROM outbound_connections oc
-		JOIN servers s ON s.id = oc.server_id
-		LEFT JOIN subscriptions sub ON sub.id = s.sub_id
-		WHERE oc.outbound_name = ?
-		ORDER BY oc.sort, oc.id`, outbound)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	whiches := &Whiches{}
-	for rows.Next() {
-		var serverID int64
-		var typ string
-		var sort, subSort int
-		if err := rows.Scan(&serverID, &typ, &sort, &subSort); err != nil {
-			return nil, err
+	var whiches *Whiches
+	err := db.WithBusyRetry(func() error {
+		rows, err := db.GetDB().Query(`
+			SELECT oc.server_id, s.type, s.sort, COALESCE(sub.sort, -1)
+			FROM outbound_connections oc
+			JOIN servers s ON s.id = oc.server_id
+			LEFT JOIN subscriptions sub ON sub.id = s.sub_id
+			WHERE oc.outbound_name = ?
+			ORDER BY oc.sort, oc.id`, outbound)
+		if err != nil {
+			return err
 		}
-		wt := &Which{ID: sort + 1, Outbound: outbound}
-		switch typ {
-		case "server":
-			wt.TYPE = ServerType
-		case "subscription_server":
-			if subSort < 0 {
-				// Stale row; a repair/prune pass will remove it.
+		defer rows.Close()
+
+		next := &Whiches{}
+		for rows.Next() {
+			var serverID int64
+			var typ string
+			var sort, subSort int
+			if err := rows.Scan(&serverID, &typ, &sort, &subSort); err != nil {
+				return err
+			}
+			wt := &Which{ID: sort + 1, Outbound: outbound}
+			switch typ {
+			case "server":
+				wt.TYPE = ServerType
+			case "subscription_server":
+				if subSort < 0 {
+					// Stale row; a repair/prune pass will remove it.
+					continue
+				}
+				wt.TYPE = SubscriptionServerType
+				wt.Sub = subSort
+			default:
 				continue
 			}
-			wt.TYPE = SubscriptionServerType
-			wt.Sub = subSort
-		default:
-			continue
+			next.Touches = append(next.Touches, wt)
 		}
-		whiches.Touches = append(whiches.Touches, wt)
-	}
-	if err := rows.Err(); err != nil {
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		whiches = next
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	if whiches.Len() == 0 {

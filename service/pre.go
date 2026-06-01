@@ -320,12 +320,8 @@ func updateSubscriptions() {
 			log.Warn("[AutoSelect] Subscription has 0 servers after update; keep previous outbound connections -- ID: %d", i)
 			continue
 		}
-		if err := service.SelectServersFromSubscription(i, true); err != nil {
-			log.Error("[AutoSelect] Failed to disconnect servers from subscription -- ID: %d, err: %v", i, err)
-			continue
-		}
-		if err := service.SelectServersFromSubscription(i, false); err != nil {
-			log.Error("[AutoSelect] Failed to auto-select servers from subscription -- ID: %d, err: %v", i, err)
+		if err := service.RefreshAutoSelectedServersFromSubscription(i); err != nil {
+			log.Error("[AutoSelect] Failed to refresh auto-selected servers from subscription -- ID: %d, err: %v", i, err)
 		}
 	}
 }
