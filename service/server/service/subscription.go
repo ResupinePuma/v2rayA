@@ -371,7 +371,10 @@ func RefreshAutoSelectedServersFromSubscription(index int) error {
 	// Also refresh outbounds that currently contain servers from this subscription;
 	// this removes stale membership if the subscription was moved to another group.
 	for _, outbound := range configure.GetOutbounds() {
-		connected := configure.GetConnectedServersByOutbound(outbound)
+		connected, err := configure.GetConnectedServersByOutboundE(outbound)
+		if err != nil {
+			return fmt.Errorf("RefreshAutoSelectedServersFromSubscription: failed to read outbound %s: %w", outbound, err)
+		}
 		if connected == nil {
 			continue
 		}
@@ -384,7 +387,10 @@ func RefreshAutoSelectedServersFromSubscription(index int) error {
 	}
 
 	for outbound := range outboundSet {
-		connected := configure.GetConnectedServersByOutbound(outbound)
+		connected, err := configure.GetConnectedServersByOutboundE(outbound)
+		if err != nil {
+			return fmt.Errorf("RefreshAutoSelectedServersFromSubscription: failed to read outbound %s before replace: %w", outbound, err)
+		}
 		preserved := make([]configure.Which, 0)
 		if connected != nil {
 			for _, wt := range connected.Get() {

@@ -390,12 +390,13 @@ func ReplaceOutboundConnections(outbound string, touches []configure.Which) (err
 		return fmt.Errorf("all selected servers were removed due to unexpected transport type")
 	}
 
-	backup := configure.GetConnectedServersByOutbound(outbound)
+	backup, err := configure.GetConnectedServersByOutboundE(outbound)
+	if err != nil {
+		return fmt.Errorf("failed to read current outbound connections before replace: %w", err)
+	}
 	restore := func() {
 		if backup != nil {
 			_ = configure.OverwriteConnects(backup)
-		} else {
-			_ = configure.ClearConnects(outbound)
 		}
 	}
 

@@ -140,7 +140,6 @@ func getConnectedServersByOutbound(outbound string) (*Whiches, error) {
 			if cached := getConnectedServersCache(outbound); cached != nil {
 				return cached, nil
 			}
-			return &Whiches{}, nil
 		}
 		return nil, err
 	}

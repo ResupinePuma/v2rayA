@@ -254,18 +254,26 @@ func GetConnectedServers() (wts *Whiches) {
 	return wts
 }
 func GetConnectedServersByOutbound(outbound string) *Whiches {
+	whiches, err := GetConnectedServersByOutboundE(outbound)
+	if err != nil {
+		log.Warn("GetConnectedServersByOutbound(%s): %v", outbound, err)
+		return nil
+	}
+	return whiches
+}
+
+func GetConnectedServersByOutboundE(outbound string) (*Whiches, error) {
 	if outbound == "" {
 		outbound = "proxy"
 	}
 	whiches, err := getConnectedServersByOutbound(outbound)
 	if err != nil {
-		log.Warn("GetConnectedServersByOutbound(%s): %v", outbound, err)
-		return nil
+		return nil, err
 	}
 	if whiches.Len() == 0 {
-		return nil
+		return nil, nil
 	}
-	return whiches
+	return whiches, nil
 }
 
 func GetLenSubscriptions() int {
