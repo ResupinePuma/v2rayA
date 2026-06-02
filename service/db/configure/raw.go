@@ -13,32 +13,49 @@ type ServerRaw struct {
 }
 
 type SubscriptionRaw struct {
-	Remarks string      `json:"remarks,omitempty"`
-	Address string      `json:"address"`
-	Status  string      `json:"status"` //update time, error info, etc.
-	Servers []ServerRaw `json:"servers"`
-	Info    string      `json:"info"` // maybe include some info from provider
-	AutoSelect bool     `json:"autoSelect"`
+	Remarks    string      `json:"remarks,omitempty"`
+	Address    string      `json:"address"`
+	Status     string      `json:"status"` //update time, error info, etc.
+	Servers    []ServerRaw `json:"servers"`
+	Info       string      `json:"info"` // maybe include some info from provider
+	AutoSelect bool        `json:"autoSelect"`
+	Outbounds  []string    `json:"outbounds"`
 }
 
 func Bytes2SubscriptionRaw(b []byte) (*SubscriptionRaw, error) {
-	var s SubscriptionRaw
-	rawList := gjson.GetBytes(b, "servers").Array()
-	for _, raw := range rawList {
-		var obj serverObj.ServerObj
-		obj, err := serverObj.New(raw.Get("serverObj.protocol").String())
-		if err != nil {
-			return nil, err
-		}
-		s.Servers = append(s.Servers, ServerRaw{ServerObj: obj})
+	var s struct {
+		Remarks    string   `json:"remarks,omitempty"`
+		Address    string   `json:"address"`
+		Status     string   `json:"status"`
+		Info       string   `json:"info"`
+		AutoSelect bool     `json:"autoSelect"`
+		Outbounds  []string `json:"outbounds"`
 	}
 	if err := jsoniter.Unmarshal(b, &s); err != nil {
 		return nil, err
 	}
-	if s.Servers == nil {
-		s.Servers = []ServerRaw{}
+	sub := &SubscriptionRaw{
+		Remarks:    s.Remarks,
+		Address:    s.Address,
+		Status:     s.Status,
+		Info:       s.Info,
+		AutoSelect: s.AutoSelect,
+		Outbounds:  s.Outbounds,
 	}
-	return &s, nil
+	rawList := gjson.GetBytes(b, "servers").Array()
+	sub.Servers = make([]ServerRaw, 0, len(rawList))
+	for _, raw := range rawList {
+		rawBytes := []byte(raw.Raw)
+		if wrapped := raw.Get("Raw").String(); wrapped != "" {
+			rawBytes = []byte(wrapped)
+		}
+		sr, err := Bytes2ServerRaw(rawBytes)
+		if err != nil {
+			return nil, err
+		}
+		sub.Servers = append(sub.Servers, *sr)
+	}
+	return sub, nil
 }
 
 func Bytes2ServerRaw(b []byte) (*ServerRaw, error) {

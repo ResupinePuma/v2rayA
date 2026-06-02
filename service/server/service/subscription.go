@@ -210,16 +210,22 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 		log.Warn("UpdateSubscription: %v: %v", err, subscriptionInfos)
 		return fmt.Errorf("UpdateSubscription: %v", reason)
 	}
+	if len(subscriptionInfos) == 0 {
+		log.Warn("UpdateSubscription: subscription %d resolved to 0 servers; keep existing servers and connections", index)
+		subscriptions[index].Status = string(touch.NewUpdateStatus())
+		subscriptions[index].Info = status
+		return configure.SetSubscription(index, &subscriptions[index])
+	}
 	infoServerRaws := make([]configure.ServerRaw, len(subscriptionInfos))
 	css := configure.GetConnectedServers()
-	cssAfter := css.Get()
 	// serverObj.ServerObj is a pointer(interface), and shouldn't be as a key
 	link2Raw := make(map[string]*configure.ServerRaw)
-	connectedVmessInfo2CssIndex := make(map[string][]int)
-	for i, cs := range css.Get() {
+	connectedVmessInfo := make(map[string]struct{})
+	for _, cs := range css.Get() {
 		if cs.TYPE == configure.SubscriptionServerType && cs.Sub == index {
 			if sRaw, err := cs.LocateServerRaw(); err != nil {
-				return err
+				log.Warn("UpdateSubscription: skipping stale connected server (Sub=%d, ID=%d, outbound=%s): %v", cs.Sub, cs.ID, cs.Outbound, err)
+				continue
 			} else {
 				if sRaw.ServerObj == nil {
 					log.Warn("UpdateSubscription: skipping connected server with nil ServerObj (Sub=%d, ID=%d)", cs.Sub, cs.ID)
@@ -227,7 +233,7 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 				}
 				link := sRaw.ServerObj.ExportToURL()
 				link2Raw[link] = sRaw
-				connectedVmessInfo2CssIndex[link] = append(connectedVmessInfo2CssIndex[link], i)
+				connectedVmessInfo[link] = struct{}{}
 			}
 		}
 	}
@@ -237,37 +243,42 @@ func UpdateSubscription(index int, disconnectIfNecessary bool) (err error) {
 			ServerObj: info,
 		}
 		link := infoServerRaw.ServerObj.ExportToURL()
-		if cssIndexes, ok := connectedVmessInfo2CssIndex[link]; ok {
-			for _, cssIndex := range cssIndexes {
-				cssAfter[cssIndex].ID = i + 1
-			}
-			delete(connectedVmessInfo2CssIndex, link)
+		if _, ok := connectedVmessInfo[link]; ok {
+			delete(connectedVmessInfo, link)
 		}
 		infoServerRaws[i] = infoServerRaw
 	}
-	for link, cssIndexes := range connectedVmessInfo2CssIndex {
-		for _, cssIndex := range cssIndexes {
-			if disconnectIfNecessary {
-				err = Disconnect(*css.Get()[cssIndex], false)
-				if err != nil {
-					reason := "failed to disconnect previous server"
-					return fmt.Errorf("UpdateSubscription: %v", reason)
-				}
-			} else {
-				// Append previously connected node
-				// TODO: may need consideration when ServerRaw changes
-				infoServerRaws = append(infoServerRaws, *link2Raw[link])
-				cssAfter[cssIndex].ID = len(infoServerRaws)
-			}
+	for link := range connectedVmessInfo {
+		if !disconnectIfNecessary {
+			// Append previously connected node so its stable DB row/connection can be preserved.
+			// TODO: may need consideration when ServerRaw changes
+			infoServerRaws = append(infoServerRaws, *link2Raw[link])
 		}
-	}
-	if err := configure.OverwriteConnects(configure.NewWhiches(cssAfter)); err != nil {
-		return err
 	}
 	subscriptions[index].Servers = infoServerRaws
 	subscriptions[index].Status = string(touch.NewUpdateStatus())
 	subscriptions[index].Info = status
 	return configure.SetSubscription(index, &subscriptions[index])
+}
+
+func normalizeSubscriptionOutbounds(outbounds []string) []string {
+	seen := make(map[string]struct{})
+	normalized := make([]string, 0, len(outbounds))
+	for _, outbound := range outbounds {
+		outbound = strings.TrimSpace(outbound)
+		if outbound == "" {
+			continue
+		}
+		if _, ok := seen[outbound]; ok {
+			continue
+		}
+		seen[outbound] = struct{}{}
+		normalized = append(normalized, outbound)
+	}
+	if len(normalized) == 0 {
+		normalized = append(normalized, "proxy")
+	}
+	return normalized
 }
 
 func ModifySubscriptionRemark(subscription touch.Subscription) (err error) {
@@ -278,6 +289,7 @@ func ModifySubscriptionRemark(subscription touch.Subscription) (err error) {
 	raw.Remarks = subscription.Remarks
 	raw.Address = subscription.Address
 	raw.AutoSelect = subscription.AutoSelect
+	raw.Outbounds = normalizeSubscriptionOutbounds(subscription.Outbounds)
 	return configure.SetSubscription(subscription.ID-1, raw)
 }
 
@@ -287,45 +299,147 @@ func SelectServersFromSubscription(index int, shouldDisconnect bool) (err error)
 	subscriptionServer.Sub = index // Subscription IDs start with 0
 	subscriptionServer.Outbound = "proxy"
 
-	for i := 1; i < configure.GetLenSubscriptionServers(index)+1; i++ {
-		subscriptionServer.ID = i // Server IDs start with 1
-		sub := configure.GetSubscription(index)
-		if sub == nil {
-			return fmt.Errorf("SelectServersFromSubscription: subscription at index %d not found", index)
+	if shouldDisconnect {
+		connected := configure.GetConnectedServers()
+		if connected == nil {
+			return nil
 		}
-		serverObj := sub.Servers[i-1].ServerObj // ServerObj IDs start with 0
-		if serverObj == nil {
-			log.Warn("[AutoSelect] Skipping server %d in subscription %d: nil ServerObj", i, index)
-			continue
-		}
-		serverName := serverObj.GetName()
-
-		// Workaround for partial SS support in v2fly and xray
-		isSupported, _ := IsSupported(subscriptionServer)
-		if !isSupported {
-			log.Info("[AutoSelect] Skipping unsupported server %v", serverName)
-			continue
-		}
-
-		if shouldDisconnect {
-			err := Disconnect(subscriptionServer, true)
-			if err == nil {
-				log.Info("[AutoSelect] Disconnected from server: %v", serverName)
-			} else {
-				log.Error("[AutoSelect] Failed to disconnect from server: %v", serverName)
-				return err
+		for _, cs := range connected.Get() {
+			if cs.TYPE == configure.SubscriptionServerType && cs.Sub == index {
+				if err := Disconnect(*cs, false); err != nil {
+					log.Error("[AutoSelect] Failed to disconnect server from subscription %d (ID=%d): %v", index, cs.ID, err)
+					return err
+				}
 			}
-		} else {
+		}
+		return nil
+	}
+
+	sub := configure.GetSubscription(index)
+	if sub == nil {
+		return fmt.Errorf("SelectServersFromSubscription: subscription at index %d not found", index)
+	}
+	for _, outbound := range normalizeSubscriptionOutbounds(sub.Outbounds) {
+		subscriptionServer.Outbound = outbound
+		for i := 1; i < configure.GetLenSubscriptionServers(index)+1; i++ {
+			subscriptionServer.ID = i               // Server IDs start with 1
+			serverObj := sub.Servers[i-1].ServerObj // ServerObj IDs start with 0
+			if serverObj == nil {
+				log.Warn("[AutoSelect] Skipping server %d in subscription %d: nil ServerObj", i, index)
+				continue
+			}
+			serverName := serverObj.GetName()
+
+			_, supportErr := IsSupported(subscriptionServer)
+			if isUnexpectedTransportErr(supportErr) {
+				log.Info("[AutoSelect] Skipping server with unexpected transport type %v: %v", serverName, supportErr)
+				continue
+			}
+
 			err := Connect(&subscriptionServer)
 			if err == nil {
-				log.Info("[AutoSelect] Automatically selected server: %v", serverName)
+				log.Info("[AutoSelect] Automatically selected server in outbound %s: %v", outbound, serverName)
 			} else {
-				log.Error("[AutoSelect] Failed to connect to server: %v", serverName)
+				log.Error("[AutoSelect] Failed to connect to server in outbound %s: %v", outbound, serverName)
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// RefreshAutoSelectedServersFromSubscription replaces the selected servers for one
+// subscription without an intermediate disconnect phase. This is important for
+// RoutingA-dependent outbounds: when an outbound currently has a single server,
+// deleting it first makes config generation fail before the new servers are added.
+func RefreshAutoSelectedServersFromSubscription(index int) error {
+	sub := configure.GetSubscription(index)
+	if sub == nil {
+		return fmt.Errorf("RefreshAutoSelectedServersFromSubscription: subscription at index %d not found", index)
+	}
+	if len(sub.Servers) == 0 {
+		log.Warn("[AutoSelect] Subscription %d has 0 servers; keep existing outbound connections", index)
+		return nil
+	}
+
+	targetOutbounds := normalizeSubscriptionOutbounds(sub.Outbounds)
+	outboundSet := make(map[string]struct{}, len(targetOutbounds))
+	for _, outbound := range targetOutbounds {
+		outboundSet[outbound] = struct{}{}
+	}
+
+	// Also refresh outbounds that currently contain servers from this subscription;
+	// this removes stale membership if the subscription was moved to another group.
+	for _, outbound := range configure.GetOutbounds() {
+		connected, err := configure.GetConnectedServersByOutboundE(outbound)
+		if err != nil {
+			return fmt.Errorf("RefreshAutoSelectedServersFromSubscription: failed to read outbound %s: %w", outbound, err)
+		}
+		if connected == nil {
+			continue
+		}
+		for _, wt := range connected.Get() {
+			if wt.TYPE == configure.SubscriptionServerType && wt.Sub == index {
+				outboundSet[outbound] = struct{}{}
+				break
+			}
+		}
+	}
+
+	for outbound := range outboundSet {
+		connected, err := configure.GetConnectedServersByOutboundE(outbound)
+		if err != nil {
+			return fmt.Errorf("RefreshAutoSelectedServersFromSubscription: failed to read outbound %s before replace: %w", outbound, err)
+		}
+		preserved := make([]configure.Which, 0)
+		if connected != nil {
+			for _, wt := range connected.Get() {
+				if wt.TYPE == configure.SubscriptionServerType && wt.Sub == index {
+					continue
+				}
+				copy := *wt
+				copy.Outbound = outbound
+				preserved = append(preserved, copy)
+			}
+		}
+
+		next := preserved
+		if shouldSelect := stringSetContains(targetOutbounds, outbound); shouldSelect {
+			for i, server := range sub.Servers {
+				if server.ServerObj == nil {
+					log.Warn("[AutoSelect] Skipping server %d in subscription %d: nil ServerObj", i+1, index)
+					continue
+				}
+				wt := configure.Which{TYPE: configure.SubscriptionServerType, Sub: index, ID: i + 1, Outbound: outbound}
+				_, supportErr := IsSupported(wt)
+				if isUnexpectedTransportErr(supportErr) {
+					// Keep it in the replace set: ReplaceOutboundConnections will prune it
+					// from the subscription instead of silently leaving bad nodes around.
+					next = append(next, wt)
+					continue
+				}
+				next = append(next, wt)
+			}
+		}
+
+		if len(next) == 0 {
+			log.Warn("[AutoSelect] Refresh for outbound %s would leave it empty; keep existing connections", outbound)
+			continue
+		}
+		if err := ReplaceOutboundConnections(outbound, next); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func stringSetContains(values []string, value string) bool {
+	for _, v := range values {
+		if v == value {
+			return true
+		}
+	}
+	return false
 }
 
 func AutoSelectServersFromSubscriptions(shouldDisconnect bool) (err error) {

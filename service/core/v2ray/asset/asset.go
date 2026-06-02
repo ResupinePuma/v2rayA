@@ -26,70 +26,79 @@ func GetV2rayLocationAssetOverride() string {
 	if assetDir := os.Getenv("V2RAY_LOCATION_ASSET"); assetDir != "" {
 		return assetDir
 	}
-	if runtime.GOOS != "windows" {
-		return filepath.Join(xdg.RuntimeDir, "v2raya")
-	} else {
-		return conf.GetEnvironmentConfig().Config
+	if assetDir := os.Getenv("XRAY_LOCATION_ASSET"); assetDir != "" {
+		return assetDir
 	}
+	// Keep geoip.dat/geosite.dat next to v2raya.db by default. This makes the
+	// asset directory stable across restarts and matches the directory that users
+	// usually mount/persist together with the SQLite database.
+	return conf.GetEnvironmentConfig().Config
 }
 
 func GetV2rayLocationAsset(filename string) (string, error) {
-	// All variants use XRAY_LOCATION_ASSET; dat files are stored under
-	// v2raya's own XDG data subdirectory ("v2raya/"), not under "xray/".
-	const envKey = "XRAY_LOCATION_ASSET"
 	const folder = "v2raya"
 
-	location := os.Getenv(envKey)
-	// check if XRAY_LOCATION_ASSET is set
-	if location != "" {
-		// add XRAY_LOCATION_ASSET to search path
-		searchPaths := []string{
-			filepath.Join(location, filename),
-		}
-		// additional paths for non windows platforms
+	assetDir := GetV2rayLocationAssetOverride()
+	if assetDir == "" {
+		assetDir = conf.GetEnvironmentConfig().Config
+	}
+	if err := os.MkdirAll(assetDir, 0755); err != nil {
+		return "", err
+	}
+	target := filepath.Join(assetDir, filename)
+	if _, err := os.Stat(target); err == nil {
+		return target, nil
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+
+	// If the user explicitly configured an asset directory, keep the old lookup
+	// behavior and download missing assets into that directory.
+	if conf.GetEnvironmentConfig().V2rayAssetsDirectory != "" || os.Getenv("V2RAY_LOCATION_ASSET") != "" || os.Getenv("XRAY_LOCATION_ASSET") != "" {
 		if runtime.GOOS != "windows" {
-			searchPaths = append(
-				searchPaths,
+			for _, searchPath := range []string{
 				filepath.Join("/usr/local/share", folder, filename),
 				filepath.Join("/usr/share", folder, filename),
-			)
-		}
-		for _, searchPath := range searchPaths {
-			if _, err := os.Stat(searchPath); err != nil && errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			// return the first path that exists
-			return searchPath, nil
-		}
-		// or download asset into XRAY_LOCATION_ASSET
-		return searchPaths[0], nil
-	} else {
-		if runtime.GOOS != "windows" {
-			// search XDG data directories on non windows platform
-			// symlink all assets into XDG_RUNTIME_DIR so xray-core can find them
-			relpath := filepath.Join(folder, filename)
-			fullpath, err := xdg.SearchDataFile(relpath)
-			if err != nil {
-				fullpath, err = xdg.DataFile(relpath)
-				if err != nil {
+			} {
+				if _, err := os.Stat(searchPath); err == nil {
+					return searchPath, nil
+				} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
 					return "", err
 				}
 			}
-			runtimepath, err := xdg.RuntimeFile(filepath.Join("v2raya", filename))
-			if err != nil {
-				return "", err
+		}
+		return target, nil
+	}
+
+	// Best-effort migration from the previous XDG data location: copy the asset
+	// next to v2raya.db, then use the stable config directory path from now on.
+	if runtime.GOOS != "windows" {
+		if oldPath, err := xdg.SearchDataFile(filepath.Join(folder, filename)); err == nil {
+			if copyErr := copyFile(oldPath, target); copyErr == nil {
+				return target, nil
+			} else {
+				log.Warn("failed to migrate %s from %s to %s: %v", filename, oldPath, target, copyErr)
 			}
-			os.Remove(runtimepath)
-			err = os.Symlink(fullpath, runtimepath)
-			if err != nil {
-				return "", err
-			}
-			return fullpath, err
-		} else {
-			// fallback to the old behavior of using only config dir on windows
-			return filepath.Join(conf.GetEnvironmentConfig().Config, filename), nil
 		}
 	}
+	return target, nil
+}
+
+func copyFile(from, to string) error {
+	in, err := os.Open(from)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(to, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 func DoesV2rayAssetExist(filename string) bool {

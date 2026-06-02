@@ -1,14 +1,22 @@
 <script lang="ts" setup>
 const { data: row } = defineProps<{ data: any }>()
 
-const input = $ref('')
+let input = $ref('')
+let selectedOutbounds = $ref<string[]>(['proxy'])
 let isVisible = $ref(false)
 
-const remarkSubscription = async(remark: string) => {
+const openDialog = () => {
+  input = row.remarks || ''
+  selectedOutbounds = Array.isArray(row.outbounds) && row.outbounds.length ? [...row.outbounds] : ['proxy']
+  isVisible = true
+}
+
+const remarkSubscription = async() => {
   const { data } = await useV2Fetch('subscription').patch({
     subscription: {
       ...row,
-      remarks: remark
+      remarks: input,
+      outbounds: selectedOutbounds.length ? selectedOutbounds : ['proxy']
     }
   }).json()
 
@@ -18,17 +26,20 @@ const remarkSubscription = async(remark: string) => {
 </script>
 
 <template>
-  <ElButton size="small" class="mr-3" @click="isVisible = true">
+  <ElButton size="small" class="mr-3" @click="openDialog">
     <UnoIcon class="ri:edit-2-line mr-1" />{{ $t('operations.modify') }}
   </ElButton>
 
   <ElDialog v-model="isVisible" :title="$t('operations.import')">
     {{ $t("configureSubscription.title") }}
     <ElInput v-model="input" :placeholder="$t('subscription.remarks')" />
+    <ElSelect v-model="selectedOutbounds" multiple class="mt-2 w-full" placeholder="Outbound groups">
+      <ElOption v-for="outbound in proxies.outbounds" :key="outbound" :label="outbound" :value="outbound" />
+    </ElSelect>
     <template #footer>
       <span class="dialog-footer">
         <ElButton @click="isVisible = false">{{ $t('operations.cancel') }}</ElButton>
-        <ElButton type="primary" @click="remarkSubscription(input)">
+        <ElButton type="primary" @click="remarkSubscription">
           {{ $t("operations.confirm") }}
         </ElButton>
       </span>

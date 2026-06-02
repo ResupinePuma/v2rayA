@@ -4,9 +4,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/v2rayA/v2rayA/conf"
 	"github.com/v2rayA/v2rayA/pkg/util/log"
@@ -18,6 +21,7 @@ var (
 	dbPath   string
 	readOnly bool
 	IsNewDB  bool // true if the database was just created (no pre-existing file)
+	writeMu  sync.Mutex
 )
 
 // ErrNeedMigration is returned when an old BoltDB database is detected,
@@ -68,10 +72,15 @@ func initDB() {
 	if err = validateSQLiteDriver(); err != nil {
 		log.Fatal("SQLite driver is unavailable: %v", err)
 	}
-	sqlDB, err = sql.Open(sqliteDriverName, dbPath)
+	sqlDB, err = sql.Open(sqliteDriverName, sqliteDSN(dbPath))
 	if err != nil {
 		log.Fatal("sql.Open: %v", err)
 	}
+	// Keep the pool small: SQLite has a single-writer model, while multiple
+	// read connections are still useful and avoid self-deadlocks in tests that
+	// compile packages with init-time DB access.
+	sqlDB.SetMaxOpenConns(4)
+	sqlDB.SetMaxIdleConns(4)
 
 	// Configure PRAGMAs for WAL mode and performance
 	pragmas := []string{
@@ -91,6 +100,10 @@ func initDB() {
 	if err := InitSchema(sqlDB); err != nil {
 		log.Fatal("InitSchema: %v", err)
 	}
+}
+
+func sqliteDSN(path string) string {
+	return "file:" + url.PathEscape(path) + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
 }
 
 // GetDB returns the singleton SQLite database connection
@@ -150,27 +163,63 @@ func Close() error {
 	return nil
 }
 
+// IsBusyError reports whether err is a transient SQLite busy/locked error.
+func IsBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "database table is locked") ||
+		strings.Contains(msg, "sqlite_busy") ||
+		strings.Contains(msg, "sqlite_locked")
+}
+
+func retryDelay(attempt int) time.Duration {
+	delay := time.Duration(attempt+1) * 100 * time.Millisecond
+	if delay > time.Second {
+		return time.Second
+	}
+	return delay
+}
+
+func WithBusyRetry(fn func() error) error {
+	deadline := time.Now().Add(15 * time.Second)
+	var err error
+	for attempt := 0; ; attempt++ {
+		err = fn()
+		if !IsBusyError(err) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(retryDelay(attempt))
+	}
+}
+
 // ReadModifyWrite executes a function within a read-write transaction.
 // If the function returns an error, the transaction is rolled back.
 // Otherwise, the transaction is committed.
 func ReadModifyWrite(fn func(tx *sql.Tx) error) error {
-	db := GetDB()
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-
-	defer func() {
-		if p := recover(); p != nil {
-			_ = tx.Rollback()
-			panic(p)
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	return WithBusyRetry(func() error {
+		db := GetDB()
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("failed to begin transaction: %w", err)
 		}
-	}()
 
-	if err := fn(tx); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
+		defer func() {
+			if p := recover(); p != nil {
+				_ = tx.Rollback()
+				panic(p)
+			}
+		}()
 
-	return tx.Commit()
+		if err := fn(tx); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+
+		return tx.Commit()
+	})
 }

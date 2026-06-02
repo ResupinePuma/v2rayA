@@ -19,6 +19,10 @@ type Observatory struct {
 	ProbeURL        string      `json:"probeURL,omitempty"`
 	ProbeInterval   string      `json:"probeInterval,omitempty"`
 }
+type BurstObservatory struct {
+	SubjectSelector []string   `json:"subjectSelector"`
+	PingConfig      PingConfig `json:"pingConfig"`
+}
 
 type PingConfig struct {
 	Destination   string `json:"destination,omitempty"`
@@ -193,12 +197,12 @@ type RealitySettings struct {
 	SpiderX     string `json:"spiderX,omitempty"`
 }
 type GrpcSettings struct {
-	ServiceName          string `json:"serviceName"`
-	MultiMode            bool   `json:"multiMode,omitempty"`
-	IdleTimeout          int    `json:"idle_timeout,omitempty"`
-	HealthCheckTimeout   int    `json:"health_check_timeout,omitempty"`
-	PermitWithoutStream  bool   `json:"permit_without_stream,omitempty"`
-	InitialWindowsSize   int    `json:"initial_windows_size,omitempty"`
+	ServiceName         string `json:"serviceName"`
+	MultiMode           bool   `json:"multiMode,omitempty"`
+	IdleTimeout         int    `json:"idle_timeout,omitempty"`
+	HealthCheckTimeout  int    `json:"health_check_timeout,omitempty"`
+	PermitWithoutStream bool   `json:"permit_without_stream,omitempty"`
+	InitialWindowsSize  int    `json:"initial_windows_size,omitempty"`
 }
 type Sockopt struct {
 	Mark        *int    `json:"mark,omitempty"`
@@ -293,6 +297,7 @@ type XHTTPSettings struct {
 	Host string `json:"host,omitempty"`
 	Mode string `json:"mode,omitempty"`
 }
+
 // WireGuard 出站配置
 type WireGuardSettings struct {
 	SecretKey  string          `json:"secretKey"`

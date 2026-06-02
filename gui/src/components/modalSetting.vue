@@ -299,7 +299,7 @@
       </b-field>
 
 
-      <b-field v-show="pacMode === 'gfwlist' || transparent === 'gfwlist'" :label="$t('setting.autoUpdateGfwlist')"
+      <b-field v-show="pacMode === 'gfwlist' || transparent === 'gfwlist'" :label="`${$t('setting.autoUpdateGfwlist')} (min)`"
         label-position="on-border">
         <b-select v-model="pacAutoUpdateMode" expanded>
           <option value="none">{{ $t("setting.options.off") }}</option>
@@ -311,10 +311,10 @@
           </option>
         </b-select>
         <cus-b-input v-if="pacAutoUpdateMode === 'auto_update_at_intervals'" ref="autoUpdatePacInput"
-          v-model="pacAutoUpdateIntervalHour" custom-class="no-shadow" type="number" min="1"
+          v-model="pacAutoUpdateIntervalMinute" custom-class="no-shadow" type="number" min="1"
           validation-icon=" iconfont icon-alert" style="flex: 1" />
       </b-field>
-      <b-field :label="$t('setting.autoUpdateSub')" label-position="on-border">
+      <b-field :label="`${$t('setting.autoUpdateSub')} (min)`" label-position="on-border">
         <b-select v-model="subscriptionAutoUpdateMode" expanded>
           <option value="none">{{ $t("setting.options.off") }}</option>
           <option value="auto_update">
@@ -325,7 +325,7 @@
           </option>
         </b-select>
         <cus-b-input v-if="subscriptionAutoUpdateMode === 'auto_update_at_intervals'" ref="autoUpdateSubInput"
-          v-model="subscriptionAutoUpdateIntervalHour" custom-class="no-shadow" type="number" min="1"
+          v-model="subscriptionAutoUpdateIntervalMinute" custom-class="no-shadow" type="number" min="1"
           validation-icon=" iconfont icon-alert" style="flex: 1" />
       </b-field>
       <b-field :label="$t('setting.preferModeWhenUpdate')" label-position="on-border">
@@ -409,8 +409,10 @@ export default {
     tunExcludeProcesses: "",
     pacAutoUpdateMode: "none",
     pacAutoUpdateIntervalHour: 0,
+    pacAutoUpdateIntervalMinute: 0,
     subscriptionAutoUpdateMode: "none",
     subscriptionAutoUpdateIntervalHour: 0,
+    subscriptionAutoUpdateIntervalMinute: 0,
     inboundSniffing: "no",
     customSiteDAT: {},
     pacMode: "whitelist",
@@ -540,9 +542,13 @@ export default {
             proxyModeWhenSubscribe: this.proxyModeWhenSubscribe,
             pacAutoUpdateMode: this.pacAutoUpdateMode,
             pacAutoUpdateIntervalHour: parseInt(this.pacAutoUpdateIntervalHour),
+            pacAutoUpdateIntervalMinute: parseInt(this.pacAutoUpdateIntervalMinute),
             subscriptionAutoUpdateMode: this.subscriptionAutoUpdateMode,
             subscriptionAutoUpdateIntervalHour: parseInt(
               this.subscriptionAutoUpdateIntervalHour
+            ),
+            subscriptionAutoUpdateIntervalMinute: parseInt(
+              this.subscriptionAutoUpdateIntervalMinute
             ),
             pacMode: this.pacMode,
             tcpFastOpen: this.tcpFastOpen,

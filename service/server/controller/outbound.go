@@ -35,8 +35,13 @@ func PostOutbound(ctx *gin.Context) {
 
 func GetOutbound(ctx *gin.Context) {
 	setting := configure.GetOutboundSetting(ctx.Query("outbound"))
+	types := make([]string, 0, len(configure.SupportedObservatoryTypes()))
+	for _, t := range configure.SupportedObservatoryTypes() {
+		types = append(types, t.String())
+	}
 	common.ResponseSuccess(ctx, gin.H{
-		"setting": setting,
+		"setting":        setting,
+		"supportedTypes": types,
 	})
 }
 

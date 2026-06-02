@@ -3,6 +3,7 @@ package v2ray
 import (
 	"context"
 	"net"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -54,22 +55,71 @@ type ObservatoryResp struct {
 	Resp         *pb.GetOutboundStatusResponse
 }
 
-func getObservatoryResponses(conn *grpc.ClientConn, observatoryTags []string) (r []ObservatoryResp, err error) {
-	c := pb.NewObservatoryServiceClient(conn)
+func extractOutboundStatuses(resp *pb.GetOutboundStatusResponse) []*observatory.OutboundStatus {
+	if resp == nil {
+		return nil
+	}
+	// v2fly-compatible shape
+	if s := resp.GetStatus(); s != nil {
+		if os := s.GetStatus(); len(os) > 0 {
+			return os
+		}
+	}
+	// xray/v2ray-compat variants may expose different field/method names.
+	rv := reflect.ValueOf(resp)
+	if rv.Kind() != reflect.Ptr || rv.IsNil() {
+		return nil
+	}
+	candidates := []string{"GetOutboundStatus", "GetOutboundStatuses", "GetResult", "GetStats"}
+	for _, method := range candidates {
+		mv := rv.MethodByName(method)
+		if !mv.IsValid() || mv.Type().NumIn() != 0 || mv.Type().NumOut() != 1 {
+			continue
+		}
+		out := mv.Call(nil)[0]
+		if out.Kind() == reflect.Slice {
+			result := make([]*observatory.OutboundStatus, 0, out.Len())
+			for i := 0; i < out.Len(); i++ {
+				if v, ok := out.Index(i).Interface().(*observatory.OutboundStatus); ok {
+					result = append(result, v)
+				}
+			}
+			if len(result) > 0 {
+				return result
+			}
+		}
+	}
+	return nil
+}
 
+func getObservatoryResponses(conn *grpc.ClientConn, observatoryTags []string) (r []ObservatoryResp, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if len(observatoryTags) == 0 {
 		observatoryTags = append(observatoryTags, "")
 	}
+	methods := []string{
+		"/v2ray.core.app.observatory.command.ObservatoryService/GetOutboundStatus",
+		"/xray.core.app.observatory.command.ObservatoryService/GetOutboundStatus",
+	}
 	for _, tag := range observatoryTags {
-		resp, err := c.GetOutboundStatus(ctx, &pb.GetOutboundStatusRequest{
-			Tag: tag,
-		})
-		if err != nil {
-			return nil, err
+		req := &pb.GetOutboundStatusRequest{Tag: tag}
+		var resp *pb.GetOutboundStatusResponse
+		var callErr error
+		for _, method := range methods {
+			resp = new(pb.GetOutboundStatusResponse)
+			callErr = conn.Invoke(ctx, method, req, resp)
+			if callErr == nil {
+				r = append(r, ObservatoryResp{OutboundName: tag, Resp: resp})
+				break
+			}
+			if status.Code(callErr) != codes.Unimplemented && status.Code(callErr) != codes.Unknown {
+				return nil, callErr
+			}
 		}
-		r = append(r, ObservatoryResp{OutboundName: tag, Resp: resp})
+		if callErr != nil {
+			return nil, callErr
+		}
 	}
 	return r, nil
 }
@@ -122,19 +172,15 @@ func ObservatoryProducer(apiPort int, observatoryTags []string) (closeFunc func(
 			} else {
 				css := configure.GetConnectedServers()
 				for _, r := range resps {
-					outboundStatus := r.Resp.GetStatus().GetStatus()
+					outboundStatus := extractOutboundStatuses(r.Resp)
 					os := make([]OutboundStatus, len(outboundStatus))
 					for i := range outboundStatus {
 						_ = mapper.AutoMapper(outboundStatus[i], &os[i])
 						index := p.tag2WhichIndex[os[i].OutboundTag]
-						if index >= css.Len() {
-							continue nextLoop
+						if index < 0 || index >= css.Len() {
+							continue
 						}
 						os[i].Which = css.Get()[index]
-						var w []configure.Which
-						for _, v := range css.Get() {
-							w = append(w, *v)
-						}
 					}
 					msg := gin.H{
 						"outboundName":   r.OutboundName,

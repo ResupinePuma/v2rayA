@@ -304,11 +304,12 @@ func IsSupported(which configure.Which) (bool, error) {
 	})
 	tmpl.SetAPI(nil)
 	serverRaw, _ := which.LocateServerRaw()
+	if serverRaw == nil || serverRaw.ServerObj == nil {
+		return false, fmt.Errorf("server is empty or invalid")
+	}
 	err = tmpl.InsertMappingOutbound(serverRaw.ServerObj, "0", false, 0, "socks")
 	if err != nil {
-		if strings.Contains(err.Error(), "unsupported") {
-			return false, err
-		}
+		return false, err
 	}
 	return true, nil
 }

@@ -45,6 +45,7 @@ type Template struct {
 	DNS              *coreObj.DNS              `json:"dns,omitempty"`
 	MultiObservatory *coreObj.MultiObservatory `json:"multiObservatory,omitempty"`
 	Observatory      *coreObj.ObservatoryItem  `json:"observatory,omitempty"`
+	BurstObservatory *coreObj.BurstObservatory `json:"burstObservatory,omitempty"`
 	API              *coreObj.APIObject        `json:"api,omitempty"`
 
 	Variant       where.Variant          `json:"-"`
@@ -1644,6 +1645,8 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 	services = slicex.Uniq(append(services, config.Api.Services...))
 	// observatory
 	if serverData != nil {
+		burstSubjectSet := make(map[string]struct{})
+		var burstProbeURL, burstProbeInterval string
 		outbounds := t.outNames()
 		for outbound, isGroup := range outbounds {
 			if !isGroup {
@@ -1652,6 +1655,11 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 
 			//TODO: random, leastload
 			strategy := serverData.OutboundName2Setting[outbound].Type
+			strategyName := strings.ToLower(strategy.String())
+			if strategyName == string(configure.Health) {
+				// "health" is a UI-friendly alias that prefers alive nodes.
+				strategyName = string(configure.LeastPing)
+			}
 			interval, err := time.ParseDuration(serverData.OutboundName2Setting[outbound].ProbeInterval)
 			if err != nil {
 				log.Warn("observatory: %v", err)
@@ -1667,14 +1675,14 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 				Tag:      outbound,
 				Selector: selector,
 				Strategy: coreObj.BalancerStrategy{
-					Type: strategy.String(),
+					Type: strategyName,
 					Settings: &coreObj.StrategySettings{
 						ObserverTag: outbound,
 					},
 				},
 			})
 
-			if strings.ToLower(strategy.String()) == "leastping" {
+			if strategyName == string(configure.LeastPing) || strategyName == string(configure.LeastLoad) {
 				probeUrl := serverData.OutboundName2Setting[outbound].ProbeURL
 				if _, err := url.Parse(probeUrl); err != nil {
 					log.Warn("observatory: %v", err)
@@ -1698,6 +1706,31 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 						ProbeInterval: interval.String(),
 					},
 				})
+				for _, s := range selector {
+					burstSubjectSet[s] = struct{}{}
+				}
+				if burstProbeURL == "" {
+					burstProbeURL = probeUrl
+				}
+				if burstProbeInterval == "" {
+					burstProbeInterval = interval.String()
+				}
+			}
+		}
+		if len(burstSubjectSet) > 0 {
+			subjects := make([]string, 0, len(burstSubjectSet))
+			for s := range burstSubjectSet {
+				subjects = append(subjects, s)
+			}
+			sort.Strings(subjects)
+			timeout := "10s"
+			t.BurstObservatory = &coreObj.BurstObservatory{
+				SubjectSelector: subjects,
+				PingConfig: coreObj.PingConfig{
+					Destination: burstProbeURL,
+					Interval:    burstProbeInterval,
+					Timeout:     timeout,
+				},
 			}
 		}
 		if t.MultiObservatory != nil || t.Observatory != nil {

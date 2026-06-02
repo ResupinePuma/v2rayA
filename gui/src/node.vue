@@ -638,6 +638,7 @@
     >
       <ModalSubscription
         :which="which"
+        :outbounds="outbounds"
         @submit="handleModalSubscriptionSubmit"
       />
     </b-modal>
