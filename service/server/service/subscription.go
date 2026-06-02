@@ -330,10 +330,9 @@ func SelectServersFromSubscription(index int, shouldDisconnect bool) (err error)
 			}
 			serverName := serverObj.GetName()
 
-			// Workaround for partial SS support in v2fly and xray
-			isSupported, _ := IsSupported(subscriptionServer)
-			if !isSupported {
-				log.Info("[AutoSelect] Skipping unsupported server %v", serverName)
+			_, supportErr := IsSupported(subscriptionServer)
+			if isUnexpectedTransportErr(supportErr) {
+				log.Info("[AutoSelect] Skipping server with unexpected transport type %v: %v", serverName, supportErr)
 				continue
 			}
 
@@ -406,13 +405,11 @@ func RefreshAutoSelectedServersFromSubscription(index int) error {
 					continue
 				}
 				wt := configure.Which{TYPE: configure.SubscriptionServerType, Sub: index, ID: i + 1, Outbound: outbound}
-				isSupported, supportErr := IsSupported(wt)
-				if !isSupported {
-					if isUnexpectedTransportErr(supportErr) {
-						next = append(next, wt)
-					} else {
-						log.Info("[AutoSelect] Skipping unsupported server %v", server.ServerObj.GetName())
-					}
+				_, supportErr := IsSupported(wt)
+				if isUnexpectedTransportErr(supportErr) {
+					// Keep it in the replace set: ReplaceOutboundConnections will prune it
+					// from the subscription instead of silently leaving bad nodes around.
+					next = append(next, wt)
 					continue
 				}
 				next = append(next, wt)

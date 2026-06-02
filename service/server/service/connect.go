@@ -40,13 +40,9 @@ func StartV2ray() (err error) {
 				log.Warn("StartV2ray: auto-excluding out-of-range connection: type=%s id=%d sub=%d outbound=%s", wt.TYPE, wt.ID, wt.Sub, wt.Outbound)
 				continue
 			}
-			supported, e := IsSupported(*wt)
-			if e != nil {
+			_, e := IsSupported(*wt)
+			if e != nil && strings.Contains(e.Error(), "unexpected transport type") {
 				log.Warn("StartV2ray: auto-excluding invalid connection while support-checking: type=%s id=%d sub=%d outbound=%s err=%v", wt.TYPE, wt.ID, wt.Sub, wt.Outbound, e)
-				continue
-			}
-			if !supported {
-				log.Warn("StartV2ray: auto-excluding unsupported server: type=%s id=%d sub=%d outbound=%s", wt.TYPE, wt.ID, wt.Sub, wt.Outbound)
 				continue
 			}
 			filtered = append(filtered, *wt)
